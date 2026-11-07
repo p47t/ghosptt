@@ -165,12 +165,20 @@ export interface SelectionRect {
   h: number;
 }
 
+export interface UrlUnderlineSpan {
+  x: number;
+  y: number;
+  w: number;
+  isHovered: boolean;
+}
+
 export interface TerminalFrameSnapshot {
   defaultBg: RgbTuple;
   defaultFg: RgbTuple;
   backgroundRects: CellBackgroundRun[];
   glyphs: CellGlyphItem[];
   selectionRects: SelectionRect[];
+  urlUnderlines?: UrlUnderlineSpan[];
   screenLines: string[];
   cursor: {
     visible: boolean;

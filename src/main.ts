@@ -1,9 +1,10 @@
-import { GhosttyVtTerminal } from './ghostty-wasm';
+import { CELL_H, CELL_W } from './constants';
+import { GhosttyVtTerminal, type UrlUnderlineSpan } from './ghostty-wasm';
 import {
   ImagePreviewOverlay,
-  extractImageLinksFromScreen,
+  extractTerminalLinksFromScreen,
   findLinkAtCell,
-  type DetectedImageLink,
+  type DetectedTerminalLink,
 } from './image-preview';
 import { mapKeyToAnsi } from './input';
 import { PttConnectionClient, type ConnectionState } from './ptt-client';
@@ -60,8 +61,9 @@ class GhosPttApp {
   private terminal: GhosttyVtTerminal | null = null;
   private pttClient: PttConnectionClient | null = null;
 
-  private detectedImageLinks: DetectedImageLink[] = [];
-  private postGalleryLinks: DetectedImageLink[] = [];
+  private detectedLinks: DetectedTerminalLink[] = [];
+  private hoveredLink: DetectedTerminalLink | null = null;
+  private postGalleryLinks: DetectedTerminalLink[] = [];
   private totalRxBytes = 0;
   private renderRequested = false;
   private isSelecting = false;
@@ -210,8 +212,7 @@ class GhosPttApp {
   private renderNow(): void {
     if (!this.terminal) return;
     const snapshot = this.terminal.captureFrameSnapshot();
-    this.activeRenderer.render(snapshot);
-    this.detectedImageLinks = extractImageLinksFromScreen(snapshot.screenLines);
+    this.detectedLinks = extractTerminalLinksFromScreen(snapshot.screenLines);
 
     // If returning to main menu or board index, reset the post image gallery
     if (
@@ -225,14 +226,36 @@ class GhosPttApp {
       this.postGalleryLinks = [];
     }
 
-    if (this.detectedImageLinks.length > 0) {
-      for (const link of this.detectedImageLinks) {
-        if (!this.postGalleryLinks.some((l) => l.imageUrl === link.imageUrl)) {
+    if (this.detectedLinks.length > 0) {
+      for (const link of this.detectedLinks) {
+        if (
+          link.isImage &&
+          link.imageUrl &&
+          !this.postGalleryLinks.some((l) => l.imageUrl === link.imageUrl)
+        ) {
           this.postGalleryLinks.push(link);
         }
       }
     }
 
+    // Build URL underlines & hover highlights
+    const urlUnderlines: UrlUnderlineSpan[] = [];
+    for (let i = 0; i < this.detectedLinks.length; i++) {
+      const link = this.detectedLinks[i];
+      const isHovered = this.hoveredLink?.rawUrl === link.rawUrl;
+      for (let j = 0; j < link.spans.length; j++) {
+        const span = link.spans[j];
+        urlUnderlines.push({
+          x: span.startCol * CELL_W,
+          y: span.row * CELL_H,
+          w: (span.endCol - span.startCol + 1) * CELL_W,
+          isHovered,
+        });
+      }
+    }
+    snapshot.urlUnderlines = urlUnderlines;
+
+    this.activeRenderer.render(snapshot);
     this.updateMetricsUi();
   }
 
@@ -366,15 +389,23 @@ class GhosPttApp {
     this.termWrapper.addEventListener('mousemove', (e: MouseEvent) => {
       if (this.isSelecting || !this.terminal) return;
       const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
-      const link = findLinkAtCell(this.detectedImageLinks, cell.col, cell.row);
+      const link = findLinkAtCell(this.detectedLinks, cell.col, cell.row);
       if (link) {
+        if (this.hoveredLink !== link) {
+          this.hoveredLink = link;
+          this.scheduleRender();
+        }
         this.termWrapper.style.cursor = 'pointer';
         const allLinks =
-          this.postGalleryLinks.length >= this.detectedImageLinks.length
+          this.postGalleryLinks.length >= this.detectedLinks.length
             ? this.postGalleryLinks
-            : this.detectedImageLinks;
+            : this.detectedLinks;
         this.imagePreview.showHover(link, e.clientX, e.clientY, allLinks);
       } else {
+        if (this.hoveredLink !== null) {
+          this.hoveredLink = null;
+          this.scheduleRender();
+        }
         this.termWrapper.style.cursor = 'text';
         this.imagePreview.hideHover();
       }
@@ -384,12 +415,20 @@ class GhosPttApp {
       if (!this.isSelecting) {
         this.termWrapper.style.cursor = 'text';
       }
+      if (this.hoveredLink !== null) {
+        this.hoveredLink = null;
+        this.scheduleRender();
+      }
       this.imagePreview.hideHover();
     });
 
     window.addEventListener('mousemove', (e: MouseEvent) => {
       if (!this.isSelecting || !this.dragAnchorCell || !this.terminal) return;
       this.imagePreview.hideHover(true);
+      if (this.hoveredLink !== null) {
+        this.hoveredLink = null;
+        this.scheduleRender();
+      }
       const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
       if (
         !this.hasMovedDuringDrag &&
@@ -418,13 +457,27 @@ class GhosPttApp {
         e.detail === 1
       ) {
         const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
-        const link = findLinkAtCell(this.detectedImageLinks, cell.col, cell.row);
+        const link = findLinkAtCell(this.detectedLinks, cell.col, cell.row);
         if (link) {
-          const allLinks =
-            this.postGalleryLinks.length >= this.detectedImageLinks.length
-              ? this.postGalleryLinks
-              : this.detectedImageLinks;
-          this.imagePreview.openLightbox(link, allLinks);
+          if (link.isImage && !e.ctrlKey && !e.metaKey) {
+            const allLinks =
+              this.postGalleryLinks.length >= this.detectedLinks.length
+                ? this.postGalleryLinks
+                : this.detectedLinks;
+            this.imagePreview.openLightbox(link, allLinks);
+          } else {
+            // General web link or Ctrl/Cmd-click on image: navigate in new tab
+            window.open(link.url, '_blank', 'noopener,noreferrer');
+            const prev = this.statusText.textContent;
+            this.statusText.textContent = `Opened link: ${link.domain}`;
+            setTimeout(() => {
+              if (this.statusText.textContent?.startsWith('Opened link:')) {
+                this.statusText.textContent = prev;
+              }
+            }, 2000);
+            this.imagePreview.hideHover(true);
+            this.focusTerminal();
+          }
         }
       }
       this.isSelecting = false;

@@ -266,12 +266,25 @@
 
     .popover-body {
       width: 260px;
-      height: 180px;
+      min-height: 48px;
+      max-height: 180px;
       display: flex;
       align-items: center;
       justify-content: center;
       background: #000000;
       overflow: hidden;
+    }
+
+    .popover-url {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 11px;
+      color: var(--text);
+      font-family: ui-monospace, monospace;
+      word-break: break-all;
+      background: #0b0b12;
+      line-height: 1.4;
+      display: none;
     }
 
     .popover-img {

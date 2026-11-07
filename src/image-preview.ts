@@ -4,12 +4,16 @@ export interface ImageLinkSpan {
   endCol: number; // inclusive
 }
 
-export interface DetectedImageLink {
+export interface DetectedTerminalLink {
   rawUrl: string;
-  imageUrl: string;
+  url: string;
+  imageUrl: string | null;
+  isImage: boolean;
   domain: string;
   spans: ImageLinkSpan[];
 }
+
+export type DetectedImageLink = DetectedTerminalLink;
 
 const URL_CANDIDATE_REGEX =
   /https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;%=]+/gi;
@@ -69,18 +73,18 @@ function extractDomain(urlStr: string): string {
     const parsed = new URL(urlStr);
     return parsed.hostname.replace(/^www\./, '');
   } catch {
-    return 'image';
+    return 'link';
   }
 }
 
 /**
- * Scans the 24 lines of the terminal screen and detects image URLs,
+ * Scans the 24 lines of the terminal screen and detects all web URLs,
  * including single-line and wrapped (across 2 lines) BBS links.
  */
-export function extractImageLinksFromScreen(
+export function extractTerminalLinksFromScreen(
   screenLines: string[]
-): DetectedImageLink[] {
-  const links: DetectedImageLink[] = [];
+): DetectedTerminalLink[] {
+  const links: DetectedTerminalLink[] = [];
 
   for (let r = 0; r < screenLines.length; r++) {
     const line = screenLines[r];
@@ -101,39 +105,40 @@ export function extractImageLinksFromScreen(
         const nextLine = screenLines[r + 1];
         const nextMatch = nextLine.match(/^[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;%=]+/);
         if (nextMatch) {
-          const candidateCombined = rawMatch + nextMatch[0];
-          const normalizedCombined = normalizeImageUrl(candidateCombined);
-          if (normalizedCombined) {
-            fullRaw = candidateCombined;
-            isWrapped = true;
-            nextSpan = {
-              row: r + 1,
-              startCol: 0,
-              endCol: nextMatch[0].length - 1,
-            };
-          }
+          fullRaw = rawMatch + nextMatch[0];
+          isWrapped = true;
+          nextSpan = {
+            row: r + 1,
+            startCol: 0,
+            endCol: nextMatch[0].length - 1,
+          };
         }
       }
 
-      const imageUrl = normalizeImageUrl(fullRaw);
-      if (imageUrl) {
-        const spans: ImageLinkSpan[] = [{ row: r, startCol, endCol }];
-        if (isWrapped && nextSpan) {
-          spans.push(nextSpan);
-        }
+      const cleanUrl = fullRaw.replace(/[.,)\]>，。）」]+$/, '');
+      if (cleanUrl.length <= 10) continue;
 
-        links.push({
-          rawUrl: fullRaw,
-          imageUrl,
-          domain: extractDomain(imageUrl),
-          spans,
-        });
+      const imageUrl = normalizeImageUrl(cleanUrl);
+      const spans: ImageLinkSpan[] = [{ row: r, startCol, endCol }];
+      if (isWrapped && nextSpan) {
+        spans.push(nextSpan);
       }
+
+      links.push({
+        rawUrl: fullRaw,
+        url: cleanUrl,
+        imageUrl,
+        isImage: imageUrl !== null,
+        domain: extractDomain(cleanUrl),
+        spans,
+      });
     }
   }
 
   return links;
 }
+
+export const extractImageLinksFromScreen = extractTerminalLinksFromScreen;
 
 /**
  * Finds if a cell at (col, row) is part of any detected image link.
@@ -163,6 +168,8 @@ export class ImagePreviewOverlay {
   private readonly hoverPopover: HTMLElement;
   private readonly hoverImg: HTMLImageElement;
   private readonly hoverDomain: HTMLElement;
+  private readonly hoverHint: HTMLElement;
+  private readonly hoverUrlText: HTMLElement;
 
   private readonly lightboxModal: HTMLElement;
   private readonly lightboxImg: HTMLImageElement;
@@ -174,9 +181,9 @@ export class ImagePreviewOverlay {
   private readonly lightboxCopyBtn: HTMLButtonElement;
   private readonly lightboxSpinner: HTMLElement;
 
-  private activeHoverLink: DetectedImageLink | null = null;
-  private lastAllLinks: DetectedImageLink[] = [];
-  private currentLinks: DetectedImageLink[] = [];
+  private activeHoverLink: DetectedTerminalLink | null = null;
+  private lastAllLinks: DetectedTerminalLink[] = [];
+  private currentLinks: DetectedTerminalLink[] = [];
   private currentIndex = 0;
   private loadCounter = 0;
   private hoverHideTimeout: number | null = null;
@@ -190,10 +197,11 @@ export class ImagePreviewOverlay {
     this.hoverPopover.className = 'image-hover-popover';
     this.hoverPopover.innerHTML = `
       <div class="popover-header">
-        <span class="popover-badge" id="popoverDomain">imgur.com</span>
-        <span class="popover-hint">Click to enlarge</span>
+        <span class="popover-badge" id="popoverDomain">link</span>
+        <span class="popover-hint" id="popoverHint">Click to open ↗</span>
       </div>
       <div class="popover-body">
+        <div class="popover-url" id="popoverUrl"></div>
         <img class="popover-img" id="popoverImg" referrerpolicy="no-referrer" alt="Preview" />
       </div>
     `;
@@ -204,6 +212,12 @@ export class ImagePreviewOverlay {
     ) as HTMLImageElement;
     this.hoverDomain = this.hoverPopover.querySelector(
       '#popoverDomain'
+    ) as HTMLElement;
+    this.hoverHint = this.hoverPopover.querySelector(
+      '#popoverHint'
+    ) as HTMLElement;
+    this.hoverUrlText = this.hoverPopover.querySelector(
+      '#popoverUrl'
     ) as HTMLElement;
 
     // 2. Build Lightbox Modal
@@ -329,20 +343,24 @@ export class ImagePreviewOverlay {
       }
     });
 
-    // Clicking the hover popover directly opens the lightbox with all known links
+    // Clicking the hover popover: opens lightbox if image, or navigates to URL
     this.hoverPopover.addEventListener('click', (e: MouseEvent) => {
       e.stopPropagation();
-      if (this.activeHoverLink) {
+      if (!this.activeHoverLink) return;
+      if (this.activeHoverLink.isImage) {
         this.openLightbox(this.activeHoverLink, this.lastAllLinks);
+      } else {
+        window.open(this.activeHoverLink.url, '_blank', 'noopener,noreferrer');
+        this.hideHover(true);
       }
     });
   }
 
   public showHover(
-    link: DetectedImageLink,
+    link: DetectedTerminalLink,
     clientX: number,
     clientY: number,
-    allLinks?: DetectedImageLink[]
+    allLinks?: DetectedTerminalLink[]
   ): void {
     if (this.isModalOpen) return;
     this.lastAllLinks = allLinks && allLinks.length > 0 ? allLinks : [link];
@@ -352,10 +370,21 @@ export class ImagePreviewOverlay {
       this.hoverHideTimeout = null;
     }
 
-    if (this.activeHoverLink?.imageUrl !== link.imageUrl) {
+    if (this.activeHoverLink?.rawUrl !== link.rawUrl) {
       this.activeHoverLink = link;
       this.hoverDomain.textContent = link.domain;
-      this.hoverImg.src = link.imageUrl;
+
+      if (link.isImage && link.imageUrl) {
+        this.hoverImg.style.display = 'block';
+        this.hoverUrlText.style.display = 'none';
+        this.hoverHint.textContent = 'Click to view · Ctrl+Click to open ↗';
+        this.hoverImg.src = link.imageUrl;
+      } else {
+        this.hoverImg.style.display = 'none';
+        this.hoverUrlText.style.display = 'block';
+        this.hoverUrlText.textContent = link.url;
+        this.hoverHint.textContent = 'Click to open in new tab ↗';
+      }
     }
 
     const containerRect = this.container.getBoundingClientRect();
@@ -368,7 +397,7 @@ export class ImagePreviewOverlay {
 
     // Flip horizontally or vertically if overflowing container boundaries
     const popoverW = 260;
-    const popoverH = 220;
+    const popoverH = link.isImage ? 220 : 100;
 
     if (popoverX + popoverW > containerRect.width) {
       popoverX = Math.max(8, relX - popoverW - 16);
@@ -403,26 +432,31 @@ export class ImagePreviewOverlay {
   }
 
   public openLightbox(
-    link: DetectedImageLink,
-    allLinks?: DetectedImageLink[]
+    link: DetectedTerminalLink,
+    allLinks?: DetectedTerminalLink[]
   ): void {
+    if (!link.isImage || !link.imageUrl) {
+      window.open(link.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
     this.hideHover(true);
     this.isModalOpen = true;
 
-    // Deduplicate all links by normalized imageUrl
-    if (allLinks && allLinks.length > 0) {
-      const seen = new Set<string>();
-      const deduped: DetectedImageLink[] = [];
-      for (const item of allLinks) {
-        if (!seen.has(item.imageUrl)) {
-          seen.add(item.imageUrl);
-          deduped.push(item);
-        }
+    // Deduplicate image links by normalized imageUrl
+    const imageLinks = (allLinks || [link]).filter(
+      (l) => l.isImage && l.imageUrl !== null
+    );
+
+    const seen = new Set<string>();
+    const deduped: DetectedTerminalLink[] = [];
+    for (const item of imageLinks) {
+      if (!seen.has(item.imageUrl!)) {
+        seen.add(item.imageUrl!);
+        deduped.push(item);
       }
-      this.currentLinks = deduped;
-    } else {
-      this.currentLinks = [link];
     }
+    this.currentLinks = deduped.length > 0 ? deduped : [link];
 
     const foundIdx = this.currentLinks.findIndex(
       (l) => l.imageUrl === link.imageUrl
@@ -455,9 +489,10 @@ export class ImagePreviewOverlay {
   private updateCurrentImage(): void {
     if (this.currentLinks.length === 0) return;
     const link = this.currentLinks[this.currentIndex];
+    const imgUrl = link.imageUrl || link.url;
 
     this.lightboxUrlText.textContent = link.rawUrl;
-    this.lightboxOpenBtn.href = link.imageUrl;
+    this.lightboxOpenBtn.href = imgUrl;
 
     const hasMultiple = this.currentLinks.length > 1;
     this.lightboxCounter.textContent = `${this.currentIndex + 1} / ${this.currentLinks.length}`;
@@ -478,13 +513,13 @@ export class ImagePreviewOverlay {
 
     const preloader = new Image();
     preloader.referrerPolicy = 'no-referrer';
-    preloader.src = link.imageUrl;
+    preloader.src = imgUrl;
 
     const handleLoaded = (success: boolean) => {
       if (this.loadCounter !== token) return;
       this.lightboxSpinner.style.display = 'none';
       if (success) {
-        this.lightboxImg.src = link.imageUrl;
+        this.lightboxImg.src = imgUrl;
         this.lightboxImg.style.opacity = '1';
       } else {
         this.lightboxSpinner.textContent = 'Failed to load image';

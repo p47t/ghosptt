@@ -236,7 +236,24 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
       }
     }
 
-    // 4. Draw selection highlight overlay
+    // 4. Draw URL underlines and highlights
+    if (frame.urlUnderlines) {
+      for (let i = 0; i < frame.urlUnderlines.length; i++) {
+        const u = frame.urlUnderlines[i];
+        if (u.isHovered) {
+          ctx.fillStyle = 'rgba(78, 168, 222, 0.15)';
+          ctx.fillRect(u.x, u.y, u.w, CELL_H);
+          ctx.fillStyle = '#4ea8de';
+          ctx.fillRect(u.x, u.y + CELL_H - 2, u.w, 2);
+        } else {
+          ctx.fillStyle = 'rgba(78, 168, 222, 0.55)';
+          ctx.fillRect(u.x, u.y + CELL_H - 2, u.w, 1);
+        }
+        drawCalls++;
+      }
+    }
+
+    // 5. Draw selection highlight overlay
     if (frame.selectionRects.length > 0) {
       ctx.fillStyle = 'rgba(78, 168, 222, 0.35)';
       for (let i = 0; i < frame.selectionRects.length; i++) {

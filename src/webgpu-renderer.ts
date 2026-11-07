@@ -813,7 +813,23 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
       }
     }
 
-    // 3. Selection highlight overlay
+    // 3. URL underlines and highlights
+    if (frame.urlUnderlines) {
+      for (let i = 0; i < frame.urlUnderlines.length; i++) {
+        const u = frame.urlUnderlines[i];
+        if (u.isHovered) {
+          // Hover background glow
+          this.pushSolidQuad(u.x, u.y, u.w, CELL_H, [78, 168, 222], 0.15);
+          // Bright accent 2px underline
+          this.pushSolidQuad(u.x, u.y + CELL_H - 2, u.w, 2, [78, 168, 222], 1.0);
+        } else {
+          // Subtle link underline
+          this.pushSolidQuad(u.x, u.y + CELL_H - 2, u.w, 1, [78, 168, 222], 0.55);
+        }
+      }
+    }
+
+    // 4. Selection highlight overlay
     for (let i = 0; i < frame.selectionRects.length; i++) {
       const sel = frame.selectionRects[i];
       this.pushSolidQuad(sel.x, sel.y, sel.w, sel.h, [78, 168, 222], 0.35);
