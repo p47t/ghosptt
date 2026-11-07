@@ -171,6 +171,7 @@ export interface TerminalFrameSnapshot {
   backgroundRects: CellBackgroundRun[];
   glyphs: CellGlyphItem[];
   selectionRects: SelectionRect[];
+  screenLines: string[];
   cursor: {
     visible: boolean;
     x: number;
@@ -658,12 +659,14 @@ export class GhosttyVtTerminal {
     const backgroundRects: CellBackgroundRun[] = [];
     const glyphs: CellGlyphItem[] = [];
     const selectionRects: SelectionRect[] = [];
+    const screenLines: string[] = [];
 
     let rowY = 0;
     while (
       this.exports.ghostty_render_state_row_iterator_next(this.rowIterPtr)
     ) {
       view = new DataView(this.memory.buffer);
+      const rowChars = new Array<string>(COLS).fill(' ');
 
       // Query row-local selection range
       view.setUint32(this.rowSelectionPtr, this.rowSelectionSize, true);
@@ -811,15 +814,21 @@ export class GhosttyVtTerminal {
                 new Uint8Array(this.memory.buffer, this.utf8DataPtr, byteLen)
               );
               const text = rawText.replace(BIG5_WIDE_PAD_RE, '');
-              if (text && text !== ' ') {
-                glyphs.push({
-                  x: colX * CELL_W,
-                  y: rowY * CELL_H,
-                  w: wide === 1 ? CELL_W * 2 : CELL_W,
-                  text,
-                  fg,
-                  flags,
-                });
+              if (text) {
+                rowChars[colX] = text;
+                if (wide === 1 && colX + 1 < COLS) {
+                  rowChars[colX + 1] = '';
+                }
+                if (text !== ' ') {
+                  glyphs.push({
+                    x: colX * CELL_W,
+                    y: rowY * CELL_H,
+                    w: wide === 1 ? CELL_W * 2 : CELL_W,
+                    text,
+                    fg,
+                    flags,
+                  });
+                }
               }
             }
           }
@@ -827,6 +836,7 @@ export class GhosttyVtTerminal {
 
         colX++;
       }
+      screenLines.push(rowChars.join(''));
       rowY++;
     }
 
@@ -838,6 +848,7 @@ export class GhosttyVtTerminal {
       backgroundRects,
       glyphs,
       selectionRects,
+      screenLines,
       cursor: {
         visible:
           cursorVisible && cursorHasPos && cursorX < COLS && cursorY < ROWS,

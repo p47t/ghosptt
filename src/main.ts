@@ -1,4 +1,10 @@
 import { GhosttyVtTerminal } from './ghostty-wasm';
+import {
+  ImagePreviewOverlay,
+  extractImageLinksFromScreen,
+  findLinkAtCell,
+  type DetectedImageLink,
+} from './image-preview';
 import { mapKeyToAnsi } from './input';
 import { PttConnectionClient, type ConnectionState } from './ptt-client';
 import { CanvasTerminalRenderer, type TerminalRenderer } from './renderer';
@@ -48,11 +54,13 @@ class GhosPttApp {
   private readonly metricGpuMem = getRequiredElement<HTMLElement>('metricGpuMem');
 
   private readonly canvasRenderer: CanvasTerminalRenderer;
+  private readonly imagePreview: ImagePreviewOverlay;
   private webgpuRenderer: WebGpuTerminalRenderer | null = null;
   private activeRenderer: TerminalRenderer;
   private terminal: GhosttyVtTerminal | null = null;
   private pttClient: PttConnectionClient | null = null;
 
+  private detectedImageLinks: DetectedImageLink[] = [];
   private totalRxBytes = 0;
   private renderRequested = false;
   private isSelecting = false;
@@ -63,6 +71,7 @@ class GhosPttApp {
   constructor() {
     this.canvasRenderer = new CanvasTerminalRenderer(this.canvas2d);
     this.activeRenderer = this.canvasRenderer;
+    this.imagePreview = new ImagePreviewOverlay(this.termWrapper);
     this.bindEvents();
     this.updateRendererUi();
     this.updateMetricsUi();
@@ -199,6 +208,7 @@ class GhosPttApp {
     if (!this.terminal) return;
     const snapshot = this.terminal.captureFrameSnapshot();
     this.activeRenderer.render(snapshot);
+    this.detectedImageLinks = extractImageLinksFromScreen(snapshot.screenLines);
     this.updateMetricsUi();
   }
 
@@ -299,6 +309,7 @@ class GhosPttApp {
     // Mouse selection on terminal wrapper (single-click drag, double-click word, triple-click line)
     this.termWrapper.addEventListener('mousedown', (e: MouseEvent) => {
       if (e.button !== 0 || !this.terminal) return;
+      this.imagePreview.hideHover(true);
       e.preventDefault();
       this.focusTerminal();
 
@@ -328,8 +339,29 @@ class GhosPttApp {
       this.scheduleRender();
     });
 
+    this.termWrapper.addEventListener('mousemove', (e: MouseEvent) => {
+      if (this.isSelecting || !this.terminal) return;
+      const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
+      const link = findLinkAtCell(this.detectedImageLinks, cell.col, cell.row);
+      if (link) {
+        this.termWrapper.style.cursor = 'pointer';
+        this.imagePreview.showHover(link, e.clientX, e.clientY);
+      } else {
+        this.termWrapper.style.cursor = 'text';
+        this.imagePreview.hideHover();
+      }
+    });
+
+    this.termWrapper.addEventListener('mouseleave', () => {
+      if (!this.isSelecting) {
+        this.termWrapper.style.cursor = 'text';
+      }
+      this.imagePreview.hideHover();
+    });
+
     window.addEventListener('mousemove', (e: MouseEvent) => {
       if (!this.isSelecting || !this.dragAnchorCell || !this.terminal) return;
+      this.imagePreview.hideHover(true);
       const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
       if (
         !this.hasMovedDuringDrag &&
@@ -350,7 +382,19 @@ class GhosPttApp {
       this.scheduleRender();
     });
 
-    window.addEventListener('mouseup', () => {
+    window.addEventListener('mouseup', (e: MouseEvent) => {
+      if (
+        e.button === 0 &&
+        !this.hasMovedDuringDrag &&
+        this.terminal &&
+        e.detail === 1
+      ) {
+        const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
+        const link = findLinkAtCell(this.detectedImageLinks, cell.col, cell.row);
+        if (link) {
+          this.imagePreview.openLightbox(link);
+        }
+      }
       this.isSelecting = false;
     });
 
@@ -429,11 +473,18 @@ class GhosPttApp {
         return;
       }
 
-      // Clear selection on Escape if one exists
-      if (e.key === 'Escape' && this.terminal.hasSelection()) {
-        this.terminal.clearSelection();
-        this.updateCopyButtonState();
-        this.scheduleRender();
+      // Close lightbox or clear selection on Escape
+      if (e.key === 'Escape') {
+        if (this.imagePreview.isLightboxOpen()) {
+          this.imagePreview.closeLightbox();
+          return;
+        }
+        if (this.terminal.hasSelection()) {
+          this.terminal.clearSelection();
+          this.updateCopyButtonState();
+          this.scheduleRender();
+          return;
+        }
       }
 
       const seq = mapKeyToAnsi(e);
