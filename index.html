@@ -182,6 +182,39 @@
       font-size: 11px;
       color: var(--text);
     }
+
+    .metrics-panel {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 14px;
+      gap: 16px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .metric-badge {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .metric-key {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .metric-val {
+      color: var(--text);
+      font-weight: 600;
+    }
   </style>
   <script type="module" src="/src/main.ts"></script>
 </head>
@@ -214,6 +247,37 @@
     <canvas id="termCanvas" width="960" height="576"></canvas>
     <canvas id="gpuCanvas" width="960" height="576" style="display: none;"></canvas>
     <textarea id="imeInput" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+  </div>
+
+  <div class="metrics-panel" id="metricsPanel">
+    <div class="metric-badge">
+      <span class="metric-key">Backend</span>
+      <span class="metric-val" id="metricBackend">--</span>
+    </div>
+    <div class="metric-badge">
+      <span class="metric-key">Frame Time</span>
+      <span class="metric-val" id="metricFrameTime">--</span>
+    </div>
+    <div class="metric-badge">
+      <span class="metric-key">FPS</span>
+      <span class="metric-val" id="metricFps">--</span>
+    </div>
+    <div class="metric-badge">
+      <span class="metric-key">Draw / Quads</span>
+      <span class="metric-val" id="metricDrawCount">--</span>
+    </div>
+    <div class="metric-badge">
+      <span class="metric-key">Glyph Cache</span>
+      <span class="metric-val" id="metricGlyphCache">--</span>
+    </div>
+    <div class="metric-badge">
+      <span class="metric-key">Texture Atlas</span>
+      <span class="metric-val" id="metricAtlas">--</span>
+    </div>
+    <div class="metric-badge">
+      <span class="metric-key">GPU Mem</span>
+      <span class="metric-val" id="metricGpuMem">--</span>
+    </div>
   </div>
 
   <div class="footer">

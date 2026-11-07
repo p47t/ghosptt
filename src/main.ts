@@ -35,6 +35,18 @@ class GhosPttApp {
   private readonly quickBtns =
     document.querySelectorAll<HTMLButtonElement>('.quick-btn');
 
+  private readonly metricBackend =
+    getRequiredElement<HTMLElement>('metricBackend');
+  private readonly metricFrameTime =
+    getRequiredElement<HTMLElement>('metricFrameTime');
+  private readonly metricFps = getRequiredElement<HTMLElement>('metricFps');
+  private readonly metricDrawCount =
+    getRequiredElement<HTMLElement>('metricDrawCount');
+  private readonly metricGlyphCache =
+    getRequiredElement<HTMLElement>('metricGlyphCache');
+  private readonly metricAtlas = getRequiredElement<HTMLElement>('metricAtlas');
+  private readonly metricGpuMem = getRequiredElement<HTMLElement>('metricGpuMem');
+
   private readonly canvasRenderer: CanvasTerminalRenderer;
   private webgpuRenderer: WebGpuTerminalRenderer | null = null;
   private activeRenderer: TerminalRenderer;
@@ -53,6 +65,8 @@ class GhosPttApp {
     this.activeRenderer = this.canvasRenderer;
     this.bindEvents();
     this.updateRendererUi();
+    this.updateMetricsUi();
+    setInterval(() => this.updateMetricsUi(), 1000);
   }
 
   public async start(): Promise<void> {
@@ -108,6 +122,7 @@ class GhosPttApp {
     }
     this.updateRendererUi();
     this.updateStatsText();
+    this.updateMetricsUi();
     this.scheduleRender();
   }
 
@@ -184,6 +199,59 @@ class GhosPttApp {
     if (!this.terminal) return;
     const snapshot = this.terminal.captureFrameSnapshot();
     this.activeRenderer.render(snapshot);
+    this.updateMetricsUi();
+  }
+
+  private updateMetricsUi(): void {
+    const metrics = this.activeRenderer.getMetrics();
+    this.metricBackend.textContent = metrics.backendName;
+
+    // Frame time: e.g. "0.24 ms (avg 0.28 ms)"
+    const curTime = metrics.lastFrameTimeMs.toFixed(2);
+    const avgTime = metrics.avgFrameTimeMs.toFixed(2);
+    this.metricFrameTime.textContent = `${curTime} ms (avg ${avgTime})`;
+
+    // FPS
+    this.metricFps.textContent =
+      metrics.fps > 0 ? `${metrics.fps} fps` : 'idle';
+
+    // Draw calls / Quads
+    if (metrics.instanceCount !== undefined) {
+      const passStr =
+        metrics.renderPassCount && metrics.renderPassCount > 1
+          ? ` (${metrics.renderPassCount} passes)`
+          : '';
+      this.metricDrawCount.textContent = `${metrics.instanceCount.toLocaleString()} quads${passStr}`;
+    } else {
+      this.metricDrawCount.textContent = `${metrics.drawCallCount.toLocaleString()} calls`;
+    }
+
+    // Glyph Cache
+    if (metrics.glyphCacheEntries !== undefined) {
+      this.metricGlyphCache.textContent = `${metrics.glyphCacheEntries.toLocaleString()} glyphs`;
+    } else {
+      this.metricGlyphCache.textContent = 'Canvas 2D Font';
+    }
+
+    // Texture Atlas
+    if (metrics.textureAtlasDim) {
+      const mb = (metrics.textureAtlasMemoryBytes! / (1024 * 1024)).toFixed(1);
+      const usage =
+        metrics.textureAtlasUsagePct !== undefined
+          ? ` · ${metrics.textureAtlasUsagePct}%`
+          : '';
+      this.metricAtlas.textContent = `${metrics.textureAtlasDim} (${mb} MB${usage})`;
+    } else {
+      this.metricAtlas.textContent = 'None';
+    }
+
+    // GPU Memory
+    if (metrics.totalGpuMemoryBytes !== undefined) {
+      const mb = (metrics.totalGpuMemoryBytes / (1024 * 1024)).toFixed(1);
+      this.metricGpuMem.textContent = `${mb} MB`;
+    } else {
+      this.metricGpuMem.textContent = 'N/A';
+    }
   }
 
   private updateCopyButtonState(): void {

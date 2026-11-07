@@ -18,6 +18,21 @@ function rgbCss(c: RgbTuple): string {
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
+export interface RenderMetrics {
+  backendName: string;
+  lastFrameTimeMs: number;
+  avgFrameTimeMs: number;
+  fps: number;
+  drawCallCount: number;
+  instanceCount?: number;
+  renderPassCount?: number;
+  glyphCacheEntries?: number;
+  textureAtlasDim?: string;
+  textureAtlasMemoryBytes?: number;
+  textureAtlasUsagePct?: number;
+  totalGpuMemoryBytes?: number;
+}
+
 export interface TerminalRenderer {
   readonly backendName: string;
   resize(): void;
@@ -26,6 +41,7 @@ export interface TerminalRenderer {
     clientY: number
   ): { col: number; row: number };
   render(frame: TerminalFrameSnapshot): void;
+  getMetrics(): RenderMetrics;
   destroy?(): void;
 }
 
@@ -37,6 +53,14 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
   public readonly backendName = 'Canvas 2D';
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
+
+  private lastFrameTimeMs = 0;
+  private avgFrameTimeMs = 0;
+  private lastDrawCallCount = 0;
+  private frameCount = 0;
+  private lastFpsTimestamp = performance.now();
+  private currentFps = 0;
+  private lastRenderTimestamp = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -158,17 +182,21 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
   }
 
   public render(frame: TerminalFrameSnapshot): void {
+    const t0 = performance.now();
     const ctx = this.ctx;
+    let drawCalls = 0;
 
     // 1. Fill terminal background
     ctx.fillStyle = rgbCss(frame.defaultBg);
     ctx.fillRect(0, 0, COLS * CELL_W, ROWS * CELL_H);
+    drawCalls++;
 
     // 2. Draw non-default cell backgrounds
     for (let i = 0; i < frame.backgroundRects.length; i++) {
       const rect = frame.backgroundRects[i];
       ctx.fillStyle = rgbCss(rect.color);
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      drawCalls++;
     }
 
     // 3. Draw glyphs and text decorations
@@ -189,6 +217,9 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
 
         ctx.fillStyle = fgCss;
         ctx.fillText(item.text, item.x, item.y + CELL_H / 2 + 1);
+        drawCalls++;
+      } else {
+        drawCalls++;
       }
 
       const underline =
@@ -196,10 +227,12 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
       if (underline !== 0) {
         ctx.fillStyle = fgCss;
         ctx.fillRect(item.x, item.y + CELL_H - 2, item.w, 1);
+        drawCalls++;
       }
       if (item.flags & STYLE_FLAG_STRIKETHROUGH) {
         ctx.fillStyle = fgCss;
         ctx.fillRect(item.x, item.y + Math.floor(CELL_H / 2), item.w, 1);
+        drawCalls++;
       }
     }
 
@@ -209,6 +242,7 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
       for (let i = 0; i < frame.selectionRects.length; i++) {
         const r = frame.selectionRects[i];
         ctx.fillRect(r.x, r.y, r.w, r.h);
+        drawCalls++;
       }
     }
 
@@ -221,6 +255,38 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
         CELL_W,
         3
       );
+      drawCalls++;
     }
+
+    const t1 = performance.now();
+    const duration = t1 - t0;
+    this.lastFrameTimeMs = duration;
+    this.avgFrameTimeMs =
+      this.avgFrameTimeMs === 0
+        ? duration
+        : this.avgFrameTimeMs * 0.85 + duration * 0.15;
+    this.lastDrawCallCount = drawCalls;
+    this.lastRenderTimestamp = t1;
+    this.frameCount++;
+
+    if (t1 - this.lastFpsTimestamp >= 1000) {
+      this.currentFps = Math.round(
+        (this.frameCount * 1000) / (t1 - this.lastFpsTimestamp)
+      );
+      this.frameCount = 0;
+      this.lastFpsTimestamp = t1;
+    }
+  }
+
+  public getMetrics(): RenderMetrics {
+    const now = performance.now();
+    const isIdle = now - this.lastRenderTimestamp > 1200;
+    return {
+      backendName: this.backendName,
+      lastFrameTimeMs: this.lastFrameTimeMs,
+      avgFrameTimeMs: this.avgFrameTimeMs,
+      fps: isIdle ? 0 : this.currentFps,
+      drawCallCount: this.lastDrawCallCount,
+    };
   }
 }

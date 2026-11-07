@@ -13,7 +13,7 @@ import {
   type RgbTuple,
 } from './constants';
 import type { TerminalFrameSnapshot } from './ghostty-wasm';
-import type { TerminalRenderer } from './renderer';
+import type { RenderMetrics, TerminalRenderer } from './renderer';
 
 const LOGICAL_W = COLS * CELL_W; // 960
 const LOGICAL_H = ROWS * CELL_H; // 576
@@ -302,6 +302,13 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
   private physH = LOGICAL_H;
   private crtEnabled = false;
   private readonly startTime = performance.now();
+
+  private lastFrameTimeMs = 0;
+  private avgFrameTimeMs = 0;
+  private frameCount = 0;
+  private lastFpsTimestamp = performance.now();
+  private currentFps = 0;
+  private lastRenderTimestamp = 0;
 
   public static async create(
     canvas: HTMLCanvasElement
@@ -712,6 +719,8 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
       return;
     }
 
+    const t0 = performance.now();
+
     // Check if devicePixelRatio changed (e.g. browser zoom or moving across monitors)
     const currentDpr = window.devicePixelRatio || 1;
     if (currentDpr !== this.dpr) {
@@ -919,6 +928,53 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
     }
 
     this.device.queue.submit([encoder.finish()]);
+
+    const t1 = performance.now();
+    const duration = t1 - t0;
+    this.lastFrameTimeMs = duration;
+    this.avgFrameTimeMs =
+      this.avgFrameTimeMs === 0
+        ? duration
+        : this.avgFrameTimeMs * 0.85 + duration * 0.15;
+    this.lastRenderTimestamp = t1;
+    this.frameCount++;
+
+    if (t1 - this.lastFpsTimestamp >= 1000) {
+      this.currentFps = Math.round(
+        (this.frameCount * 1000) / (t1 - this.lastFpsTimestamp)
+      );
+      this.frameCount = 0;
+      this.lastFpsTimestamp = t1;
+    }
+  }
+
+  public getMetrics(): RenderMetrics {
+    const atlasBytes = ATLAS_SIZE * ATLAS_SIZE * 4; // 16 MB
+    const offscreenBytes = this.crtEnabled ? this.physW * this.physH * 4 : 0;
+    const vertexBufferBytes = this.instanceData.byteLength;
+    const totalGpuMemoryBytes = atlasBytes + offscreenBytes + vertexBufferBytes;
+
+    const usedHeight = Math.min(
+      ATLAS_SIZE,
+      this.atlasCursorY + this.atlasRowHeight
+    );
+    const usagePct = (usedHeight / ATLAS_SIZE) * 100;
+    const isIdle = performance.now() - this.lastRenderTimestamp > 1200;
+
+    return {
+      backendName: this.crtEnabled ? 'WebGPU (CRT)' : 'WebGPU',
+      lastFrameTimeMs: this.lastFrameTimeMs,
+      avgFrameTimeMs: this.avgFrameTimeMs,
+      fps: isIdle ? 0 : this.currentFps,
+      drawCallCount: this.crtEnabled ? 2 : 1,
+      renderPassCount: this.crtEnabled ? 2 : 1,
+      instanceCount: this.instanceCount,
+      glyphCacheEntries: this.atlasCache.size,
+      textureAtlasDim: `${ATLAS_SIZE}×${ATLAS_SIZE}`,
+      textureAtlasMemoryBytes: atlasBytes,
+      textureAtlasUsagePct: Math.round(usagePct * 10) / 10,
+      totalGpuMemoryBytes,
+    };
   }
 
   public destroy(): void {
