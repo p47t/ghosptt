@@ -20,3 +20,11 @@ run = "npm run build"
 [tasks.preview]
 description = "Preview production build"
 run = "npm run preview"
+
+[tasks.cf-dev]
+description = "Test locally with Cloudflare Workers runtime (workerd)"
+run = "npm run cf:dev"
+
+[tasks.deploy]
+description = "Build and deploy to Cloudflare Workers"
+run = "npm run deploy"

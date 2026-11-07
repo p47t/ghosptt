@@ -58,6 +58,15 @@ A modern, high-performance **PTT (批踢踢實業坊)** web client powered by [`
    mise run preview
    ```
 
+4. **Deploy to Cloudflare Workers**:
+   ```bash
+   # Test locally using Cloudflare Workers runtime (workerd)
+   mise run cf-dev
+
+   # Deploy to Cloudflare edge network
+   mise run deploy
+   ```
+
 ## Project Structure
 
 ```text
@@ -67,6 +76,10 @@ A modern, high-performance **PTT (批踢踢實業坊)** web client powered by [`
 ├── package.json            # Package manifest and scripts
 ├── tsconfig.json           # Strict TypeScript configuration
 ├── vite.config.ts          # Vite configuration + /bbs WebSocket proxy plugin
+├── wrangler.jsonc          # Cloudflare Workers configuration with static asset binding
+├── worker/
+│   ├── index.ts            # Cloudflare Worker: serves static assets & proxies /bbs to PTT
+│   └── tsconfig.json       # Worker TypeScript configuration
 ├── public/
 │   └── ghostty-vt.wasm     # Prebuilt libghostty-vt WebAssembly binary
 └── src/
