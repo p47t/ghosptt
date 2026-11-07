@@ -197,6 +197,8 @@
     <div class="controls">
       <button id="connectBtn" class="primary" disabled>Connect</button>
       <button id="disconnectBtn" disabled>Disconnect</button>
+      <button id="rendererBtn" title="Switch between WebGPU and Canvas 2D renderer">Renderer: ...</button>
+      <button id="crtBtn" title="Toggle WebGPU CRT scanline & curvature shader" disabled>CRT: Off</button>
       <button id="copyBtn" title="Copy selected text (or Ctrl+Shift+C / Ctrl+C)" disabled>Copy</button>
       <button id="pasteBtn" title="Paste clipboard (or Ctrl+Shift+V / Ctrl+V)" disabled>Paste</button>
       <button data-send="guest\r" class="quick-btn" title="Send 'guest' + Enter" disabled>Login Guest</button>
@@ -210,6 +212,7 @@
 
   <div class="terminal-wrapper" id="termWrapper" tabindex="0">
     <canvas id="termCanvas" width="960" height="576"></canvas>
+    <canvas id="gpuCanvas" width="960" height="576" style="display: none;"></canvas>
     <textarea id="imeInput" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
   </div>
 

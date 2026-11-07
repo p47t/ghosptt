@@ -18,11 +18,23 @@ function rgbCss(c: RgbTuple): string {
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
+export interface TerminalRenderer {
+  readonly backendName: string;
+  resize(): void;
+  clientPointToCell(
+    clientX: number,
+    clientY: number
+  ): { col: number; row: number };
+  render(frame: TerminalFrameSnapshot): void;
+  destroy?(): void;
+}
+
 /**
  * Renders `TerminalFrameSnapshot` frames from `GhosttyVtTerminal` onto an HTML5 Canvas.
  * Includes pixel-exact geometry for BBS block elements and triangles.
  */
-export class CanvasTerminalRenderer {
+export class CanvasTerminalRenderer implements TerminalRenderer {
+  public readonly backendName = 'Canvas 2D';
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
 

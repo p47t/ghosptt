@@ -1,7 +1,8 @@
 import { GhosttyVtTerminal } from './ghostty-wasm';
 import { mapKeyToAnsi } from './input';
 import { PttConnectionClient, type ConnectionState } from './ptt-client';
-import { CanvasTerminalRenderer } from './renderer';
+import { CanvasTerminalRenderer, type TerminalRenderer } from './renderer';
+import { WebGpuTerminalRenderer } from './webgpu-renderer';
 
 function getRequiredElement<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -19,20 +20,28 @@ class GhosPttApp {
     getRequiredElement<HTMLButtonElement>('connectBtn');
   private readonly disconnectBtn =
     getRequiredElement<HTMLButtonElement>('disconnectBtn');
+  private readonly rendererBtn =
+    getRequiredElement<HTMLButtonElement>('rendererBtn');
+  private readonly crtBtn = getRequiredElement<HTMLButtonElement>('crtBtn');
   private readonly copyBtn = getRequiredElement<HTMLButtonElement>('copyBtn');
   private readonly pasteBtn = getRequiredElement<HTMLButtonElement>('pasteBtn');
   private readonly termWrapper = getRequiredElement<HTMLElement>('termWrapper');
-  private readonly canvas =
+  private readonly canvas2d =
     getRequiredElement<HTMLCanvasElement>('termCanvas');
+  private readonly canvasGpu =
+    getRequiredElement<HTMLCanvasElement>('gpuCanvas');
   private readonly imeInput =
     getRequiredElement<HTMLTextAreaElement>('imeInput');
   private readonly quickBtns =
     document.querySelectorAll<HTMLButtonElement>('.quick-btn');
 
-  private readonly renderer: CanvasTerminalRenderer;
+  private readonly canvasRenderer: CanvasTerminalRenderer;
+  private webgpuRenderer: WebGpuTerminalRenderer | null = null;
+  private activeRenderer: TerminalRenderer;
   private terminal: GhosttyVtTerminal | null = null;
   private pttClient: PttConnectionClient | null = null;
 
+  private totalRxBytes = 0;
   private renderRequested = false;
   private isSelecting = false;
   private dragAnchorCell: { col: number; row: number } | null = null;
@@ -40,22 +49,38 @@ class GhosPttApp {
   private isComposing = false;
 
   constructor() {
-    this.renderer = new CanvasTerminalRenderer(this.canvas);
+    this.canvasRenderer = new CanvasTerminalRenderer(this.canvas2d);
+    this.activeRenderer = this.canvasRenderer;
     this.bindEvents();
+    this.updateRendererUi();
   }
 
   public async start(): Promise<void> {
     try {
-      this.terminal = await GhosttyVtTerminal.create('./ghostty-vt.wasm');
+      const [terminal, gpuRenderer] = await Promise.all([
+        GhosttyVtTerminal.create('./ghostty-vt.wasm'),
+        WebGpuTerminalRenderer.create(this.canvasGpu),
+      ]);
+
+      this.terminal = terminal;
+      this.webgpuRenderer = gpuRenderer;
+
+      if (this.webgpuRenderer) {
+        this.setRendererMode('webgpu');
+      } else {
+        this.setRendererMode('canvas2d');
+      }
+
       this.pttClient = new PttConnectionClient(
         (cp) => this.terminal!.codepointWidth(cp),
         {
           onStatusChange: (state, msg) => this.handleStatusChange(state, msg),
           onTerminalText: (text, totalRx) => {
+            this.totalRxBytes = totalRx;
             this.terminal?.writeVt(text);
             this.updateCopyButtonState();
             this.scheduleRender();
-            this.statsText.textContent = `80×24 · RX ${(totalRx / 1024).toFixed(1)} KB · Big5 / Telnet · libghostty-vt.wasm`;
+            this.updateStatsText();
           },
         }
       );
@@ -67,6 +92,53 @@ class GhosPttApp {
       const msg = err instanceof Error ? err.message : String(err);
       this.handleStatusChange('error', `Init error: ${msg}`);
     }
+  }
+
+  private setRendererMode(mode: 'webgpu' | 'canvas2d'): void {
+    if (mode === 'webgpu' && this.webgpuRenderer) {
+      this.activeRenderer = this.webgpuRenderer;
+      this.canvas2d.style.display = 'none';
+      this.canvasGpu.style.display = 'block';
+      this.webgpuRenderer.resize();
+    } else {
+      this.activeRenderer = this.canvasRenderer;
+      this.canvasGpu.style.display = 'none';
+      this.canvas2d.style.display = 'block';
+      this.canvasRenderer.resize();
+    }
+    this.updateRendererUi();
+    this.updateStatsText();
+    this.scheduleRender();
+  }
+
+  private updateRendererUi(): void {
+    const isGpu = this.activeRenderer === this.webgpuRenderer;
+    if (!this.webgpuRenderer) {
+      this.rendererBtn.textContent = 'Renderer: Canvas 2D (No WebGPU)';
+      this.rendererBtn.disabled = true;
+      this.crtBtn.textContent = 'CRT: N/A';
+      this.crtBtn.disabled = true;
+      return;
+    }
+
+    this.rendererBtn.disabled = false;
+    this.rendererBtn.textContent = isGpu
+      ? 'Renderer: WebGPU'
+      : 'Renderer: Canvas 2D';
+
+    this.crtBtn.disabled = !isGpu;
+    const crtOn = this.webgpuRenderer.isCrtEnabled();
+    this.crtBtn.textContent = `CRT: ${crtOn ? 'On' : 'Off'}`;
+  }
+
+  private updateStatsText(): void {
+    const isGpu = this.activeRenderer === this.webgpuRenderer;
+    const backendLabel = isGpu
+      ? this.webgpuRenderer?.isCrtEnabled()
+        ? 'WebGPU (CRT)'
+        : 'WebGPU'
+      : 'Canvas 2D';
+    this.statsText.textContent = `80×24 · RX ${(this.totalRxBytes / 1024).toFixed(1)} KB · ${backendLabel} · libghostty-vt.wasm`;
   }
 
   private connectPtt(): void {
@@ -111,7 +183,7 @@ class GhosPttApp {
   private renderNow(): void {
     if (!this.terminal) return;
     const snapshot = this.terminal.captureFrameSnapshot();
-    this.renderer.render(snapshot);
+    this.activeRenderer.render(snapshot);
   }
 
   private updateCopyButtonState(): void {
@@ -156,13 +228,13 @@ class GhosPttApp {
   }
 
   private bindEvents(): void {
-    // Mouse selection on canvas (single-click drag, double-click word, triple-click line)
-    this.canvas.addEventListener('mousedown', (e: MouseEvent) => {
+    // Mouse selection on terminal wrapper (single-click drag, double-click word, triple-click line)
+    this.termWrapper.addEventListener('mousedown', (e: MouseEvent) => {
       if (e.button !== 0 || !this.terminal) return;
       e.preventDefault();
       this.focusTerminal();
 
-      const cell = this.renderer.clientPointToCell(e.clientX, e.clientY);
+      const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
 
       if (e.detail === 2) {
         this.isSelecting = false;
@@ -190,7 +262,7 @@ class GhosPttApp {
 
     window.addEventListener('mousemove', (e: MouseEvent) => {
       if (!this.isSelecting || !this.dragAnchorCell || !this.terminal) return;
-      const cell = this.renderer.clientPointToCell(e.clientX, e.clientY);
+      const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
       if (
         !this.hasMovedDuringDrag &&
         cell.col === this.dragAnchorCell.col &&
@@ -309,6 +381,20 @@ class GhosPttApp {
     this.disconnectBtn.addEventListener('click', () =>
       this.pttClient?.disconnect()
     );
+    this.rendererBtn.addEventListener('click', () => {
+      if (!this.webgpuRenderer) return;
+      const isGpu = this.activeRenderer === this.webgpuRenderer;
+      this.setRendererMode(isGpu ? 'canvas2d' : 'webgpu');
+      this.focusTerminal();
+    });
+    this.crtBtn.addEventListener('click', () => {
+      if (!this.webgpuRenderer) return;
+      this.webgpuRenderer.setCrtEnabled(!this.webgpuRenderer.isCrtEnabled());
+      this.updateRendererUi();
+      this.updateStatsText();
+      this.scheduleRender();
+      this.focusTerminal();
+    });
     this.copyBtn.addEventListener('click', () => {
       void this.copySelectionToClipboard();
       this.focusTerminal();
@@ -333,7 +419,7 @@ class GhosPttApp {
     });
 
     window.addEventListener('resize', () => {
-      this.renderer.resize();
+      this.activeRenderer.resize();
       this.scheduleRender();
     });
   }
