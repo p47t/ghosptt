@@ -72,7 +72,9 @@ class GhosPttApp {
   constructor() {
     this.canvasRenderer = new CanvasTerminalRenderer(this.canvas2d);
     this.activeRenderer = this.canvasRenderer;
-    this.imagePreview = new ImagePreviewOverlay(this.termWrapper);
+    this.imagePreview = new ImagePreviewOverlay(this.termWrapper, () => {
+      this.focusTerminal();
+    });
     this.bindEvents();
     this.updateRendererUi();
     this.updateMetricsUi();

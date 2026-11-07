@@ -178,10 +178,11 @@ export class ImagePreviewOverlay {
   private lastAllLinks: DetectedImageLink[] = [];
   private currentLinks: DetectedImageLink[] = [];
   private currentIndex = 0;
+  private loadCounter = 0;
   private hoverHideTimeout: number | null = null;
   private isModalOpen = false;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, private readonly onClose?: () => void) {
     this.container = container;
 
     // 1. Build Hover Popover
@@ -328,17 +329,6 @@ export class ImagePreviewOverlay {
       }
     });
 
-    this.lightboxImg.addEventListener('load', () => {
-      this.lightboxSpinner.style.display = 'none';
-      this.lightboxImg.style.display = 'block';
-    });
-
-    this.lightboxImg.addEventListener('error', () => {
-      this.lightboxSpinner.textContent = 'Failed to load image';
-      this.lightboxSpinner.style.display = 'block';
-      this.lightboxImg.style.display = 'none';
-    });
-
     // Clicking the hover popover directly opens the lightbox with all known links
     this.hoverPopover.addEventListener('click', (e: MouseEvent) => {
       e.stopPropagation();
@@ -475,16 +465,49 @@ export class ImagePreviewOverlay {
     this.lightboxPrevBtn.style.display = hasMultiple ? 'flex' : 'none';
     this.lightboxNextBtn.style.display = hasMultiple ? 'flex' : 'none';
 
+    const token = ++this.loadCounter;
     this.lightboxSpinner.textContent = 'Loading image...';
     this.lightboxSpinner.style.display = 'block';
-    this.lightboxImg.style.display = 'none';
-    this.lightboxImg.src = link.imageUrl;
+
+    // Keep previous image dimly visible to prevent layout flash while next image loads
+    if (this.lightboxImg.src) {
+      this.lightboxImg.style.opacity = '0.35';
+    } else {
+      this.lightboxImg.style.opacity = '0';
+    }
+
+    const preloader = new Image();
+    preloader.referrerPolicy = 'no-referrer';
+    preloader.src = link.imageUrl;
+
+    const handleLoaded = (success: boolean) => {
+      if (this.loadCounter !== token) return;
+      this.lightboxSpinner.style.display = 'none';
+      if (success) {
+        this.lightboxImg.src = link.imageUrl;
+        this.lightboxImg.style.opacity = '1';
+      } else {
+        this.lightboxSpinner.textContent = 'Failed to load image';
+        this.lightboxSpinner.style.display = 'block';
+        this.lightboxImg.style.opacity = '0';
+      }
+    };
+
+    if (preloader.complete && preloader.naturalWidth > 0) {
+      handleLoaded(true);
+    } else {
+      preloader.onload = () => handleLoaded(true);
+      preloader.onerror = () => handleLoaded(false);
+    }
   }
 
   public closeLightbox(): void {
+    if (!this.isModalOpen) return;
     this.isModalOpen = false;
     this.lightboxModal.style.display = 'none';
     this.lightboxImg.src = '';
+    this.lightboxImg.style.opacity = '1';
+    this.onClose?.();
   }
 
   public isLightboxOpen(): boolean {
