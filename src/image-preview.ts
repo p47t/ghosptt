@@ -240,7 +240,7 @@ export class ImagePreviewOverlay {
         <div class="lightbox-body">
           <button class="lightbox-nav-btn prev" id="lightboxPrevBtn" title="Previous Image (← or A)">❮</button>
           <div class="lightbox-content">
-            <div class="lightbox-spinner" id="lightboxSpinner">Loading...</div>
+            <div class="lightbox-spinner" id="lightboxSpinner" style="display: none;"></div>
             <img class="lightbox-img" id="lightboxImg" referrerpolicy="no-referrer" alt="Full Image" />
           </div>
           <button class="lightbox-nav-btn next" id="lightboxNextBtn" title="Next Image (→ or D)">❯</button>
@@ -501,8 +501,7 @@ export class ImagePreviewOverlay {
     this.lightboxNextBtn.style.display = hasMultiple ? 'flex' : 'none';
 
     const token = ++this.loadCounter;
-    this.lightboxSpinner.textContent = 'Loading image...';
-    this.lightboxSpinner.style.display = 'block';
+    this.lightboxSpinner.style.display = 'none';
 
     // Keep previous image dimly visible to prevent layout flash while next image loads
     if (this.lightboxImg.src) {
@@ -517,8 +516,8 @@ export class ImagePreviewOverlay {
 
     const handleLoaded = (success: boolean) => {
       if (this.loadCounter !== token) return;
-      this.lightboxSpinner.style.display = 'none';
       if (success) {
+        this.lightboxSpinner.style.display = 'none';
         this.lightboxImg.src = imgUrl;
         this.lightboxImg.style.opacity = '1';
       } else {
@@ -540,6 +539,7 @@ export class ImagePreviewOverlay {
     if (!this.isModalOpen) return;
     this.isModalOpen = false;
     this.lightboxModal.style.display = 'none';
+    this.lightboxSpinner.style.display = 'none';
     this.lightboxImg.src = '';
     this.lightboxImg.style.opacity = '1';
     this.onClose?.();
