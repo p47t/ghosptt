@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GhosPTT — libghostty-vt WASM PTT Client</title>
+  <style>
+    :root {
+      --bg: #0c0c0f;
+      --panel: #16161d;
+      --border: #2a2a37;
+      --text: #e0e0e8;
+      --muted: #8a8a9e;
+      --accent: #4ea8de;
+      --success: #52b788;
+      --danger: #e63946;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+      gap: 12px;
+    }
+
+    header {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 16px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand h1 {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+
+    .badge {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #232330;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .dot.connected {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .dot.error {
+      background: var(--danger);
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: #232332;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    button:hover:not(:disabled) {
+      background: #2e2e42;
+      border-color: #3e3e58;
+    }
+
+    button.primary {
+      background: #1d4e89;
+      border-color: #2b6cb0;
+    }
+
+    button.primary:hover:not(:disabled) {
+      background: #2660a4;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .terminal-wrapper {
+      position: relative;
+      background: #000000;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      padding: 6px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+      outline: none;
+    }
+
+    .terminal-wrapper:focus-within,
+    .terminal-wrapper.focused {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(78, 168, 222, 0.25), 0 12px 36px rgba(0, 0, 0, 0.6);
+    }
+
+    canvas {
+      display: block;
+      background: #000000;
+      cursor: text;
+    }
+
+    /* Hidden textarea to support IME composition (Chinese input) & clipboard paste */
+    #imeInput {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: transparent;
+    }
+
+    .footer {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 4px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    kbd {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: monospace;
+      font-size: 11px;
+      color: var(--text);
+    }
+  </style>
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>GhosPTT</h1>
+      <span class="badge">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">Initializing WASM...</span>
+      </span>
+    </div>
+    <div class="controls">
+      <button id="connectBtn" class="primary" disabled>Connect</button>
+      <button id="disconnectBtn" disabled>Disconnect</button>
+      <button data-send="guest\r" class="quick-btn" title="Send 'guest' + Enter" disabled>Login Guest</button>
+      <button data-send="\r" class="quick-btn" title="Send Enter" disabled>Enter</button>
+      <button data-send="\x1b[D" class="quick-btn" title="Left Arrow (Back)" disabled>←</button>
+      <button data-send="\x1b[A" class="quick-btn" title="Up Arrow" disabled>↑</button>
+      <button data-send="\x1b[B" class="quick-btn" title="Down Arrow" disabled>↓</button>
+      <button data-send="\x1b[C" class="quick-btn" title="Right Arrow" disabled>→</button>
+    </div>
+  </header>
+
+  <div class="terminal-wrapper" id="termWrapper" tabindex="0">
+    <canvas id="termCanvas" width="960" height="576"></canvas>
+    <textarea id="imeInput" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+  </div>
+
+  <div class="footer">
+    <div>
+      Click terminal to focus. Keys: <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> <kbd>Enter</kbd> <kbd>PgUp</kbd>/<kbd>PgDn</kbd> <kbd>Home</kbd>/<kbd>End</kbd> <kbd>Ctrl+A..Z</kbd>
+    </div>
+    <div id="statsText">80×24 · Big5 / Telnet · libghostty-vt.wasm</div>
+  </div>
+</body>
+</html>
