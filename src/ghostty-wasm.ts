@@ -180,6 +180,7 @@ export interface TerminalFrameSnapshot {
   selectionRects: SelectionRect[];
   urlUnderlines?: UrlUnderlineSpan[];
   screenLines: string[];
+  screenLineColMaps?: number[][];
   cursor: {
     visible: boolean;
     x: number;
@@ -668,6 +669,7 @@ export class GhosttyVtTerminal {
     const glyphs: CellGlyphItem[] = [];
     const selectionRects: SelectionRect[] = [];
     const screenLines: string[] = [];
+    const screenLineColMaps: number[][] = [];
 
     let rowY = 0;
     while (
@@ -844,7 +846,19 @@ export class GhosttyVtTerminal {
 
         colX++;
       }
-      screenLines.push(rowChars.join(''));
+      let rowText = '';
+      const colMap: number[] = [];
+      for (let c = 0; c < COLS; c++) {
+        const ch = rowChars[c];
+        if (ch !== '') {
+          for (let k = 0; k < ch.length; k++) {
+            colMap.push(c);
+          }
+          rowText += ch;
+        }
+      }
+      screenLines.push(rowText);
+      screenLineColMaps.push(colMap);
       rowY++;
     }
 
@@ -857,6 +871,7 @@ export class GhosttyVtTerminal {
       glyphs,
       selectionRects,
       screenLines,
+      screenLineColMaps,
       cursor: {
         visible:
           cursorVisible && cursorHasPos && cursorX < COLS && cursorY < ROWS,

@@ -212,7 +212,10 @@ class GhosPttApp {
   private renderNow(): void {
     if (!this.terminal) return;
     const snapshot = this.terminal.captureFrameSnapshot();
-    this.detectedLinks = extractTerminalLinksFromScreen(snapshot.screenLines);
+    this.detectedLinks = extractTerminalLinksFromScreen(
+      snapshot.screenLines,
+      snapshot.screenLineColMaps
+    );
 
     // If returning to main menu or board index, reset the post image gallery
     if (

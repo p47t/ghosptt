@@ -78,23 +78,62 @@ function extractDomain(urlStr: string): string {
 }
 
 /**
+ * Builds a fallback mapping from string character index to BBS terminal column index.
+ * Used when direct `colMaps` from libghostty-vt are not provided.
+ */
+function buildFallbackColMap(line: string): number[] {
+  const map: number[] = [];
+  let col = 0;
+  for (let i = 0; i < line.length; i++) {
+    const cp = line.codePointAt(i) ?? 0;
+    map.push(col);
+    if (cp > 0xffff) {
+      i++;
+      map.push(col);
+    }
+    const isWide =
+      (cp >= 0x1100 && cp <= 0x115f) ||
+      (cp >= 0x2e80 && cp <= 0xa4cf) ||
+      (cp >= 0xac00 && cp <= 0xd7a3) ||
+      (cp >= 0xf900 && cp <= 0xfaff) ||
+      (cp >= 0xfe10 && cp <= 0xfe19) ||
+      (cp >= 0xfe30 && cp <= 0xfe6f) ||
+      (cp >= 0xff00 && cp <= 0xff60) ||
+      (cp >= 0xffe0 && cp <= 0xffe6) ||
+      (cp >= 0x20000 && cp <= 0x3ffff) ||
+      (cp >= 0x2500 && cp <= 0x259f) ||
+      (cp >= 0x25a0 && cp <= 0x25ff);
+    col += isWide ? 2 : 1;
+  }
+  return map;
+}
+
+/**
  * Scans the 24 lines of the terminal screen and detects all web URLs,
  * including single-line and wrapped (across 2 lines) BBS links.
+ * Accurately calculates grid column coordinates by accounting for 2-column wide CJK/Big5 characters.
  */
 export function extractTerminalLinksFromScreen(
-  screenLines: string[]
+  screenLines: string[],
+  colMaps?: number[][]
 ): DetectedTerminalLink[] {
   const links: DetectedTerminalLink[] = [];
 
   for (let r = 0; r < screenLines.length; r++) {
     const line = screenLines[r];
+    const colMap =
+      colMaps && colMaps[r] ? colMaps[r] : buildFallbackColMap(line);
     URL_CANDIDATE_REGEX.lastIndex = 0;
     let match: RegExpExecArray | null;
 
     while ((match = URL_CANDIDATE_REGEX.exec(line)) !== null) {
       const rawMatch = match[0];
-      const startCol = match.index;
-      const endCol = startCol + rawMatch.length - 1;
+      const startCharIdx = match.index;
+      const endCharIdx = startCharIdx + rawMatch.length - 1;
+      const startCol =
+        startCharIdx < colMap.length ? colMap[startCharIdx] : startCharIdx;
+      let endCol =
+        endCharIdx < colMap.length ? colMap[endCharIdx] : endCharIdx;
 
       // Check if this URL wraps onto the next line (common in BBS when URL reaches right margin)
       let isWrapped = false;
@@ -103,20 +142,49 @@ export function extractTerminalLinksFromScreen(
 
       if (r + 1 < screenLines.length && endCol >= 72) {
         const nextLine = screenLines[r + 1];
-        const nextMatch = nextLine.match(/^[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;%=]+/);
+        const nextColMap =
+          colMaps && colMaps[r + 1]
+            ? colMaps[r + 1]
+            : buildFallbackColMap(nextLine);
+        const nextMatch = nextLine.match(
+          /^[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;%=]+/
+        );
         if (nextMatch) {
           fullRaw = rawMatch + nextMatch[0];
           isWrapped = true;
+          const nextStartCol = nextColMap.length > 0 ? nextColMap[0] : 0;
+          const nextEndCharIdx = nextMatch[0].length - 1;
+          const nextEndCol =
+            nextEndCharIdx < nextColMap.length
+              ? nextColMap[nextEndCharIdx]
+              : nextEndCharIdx;
           nextSpan = {
             row: r + 1,
-            startCol: 0,
-            endCol: nextMatch[0].length - 1,
+            startCol: nextStartCol,
+            endCol: nextEndCol,
           };
         }
       }
 
       const cleanUrl = fullRaw.replace(/[.,)\]>，。）」]+$/, '');
       if (cleanUrl.length <= 10) continue;
+
+      const trimmedCount = fullRaw.length - cleanUrl.length;
+      if (trimmedCount > 0) {
+        if (isWrapped && nextSpan) {
+          const nextSpanLen = nextSpan.endCol - nextSpan.startCol + 1;
+          if (trimmedCount < nextSpanLen) {
+            nextSpan.endCol -= trimmedCount;
+          } else {
+            const remaining = trimmedCount - nextSpanLen;
+            nextSpan = null;
+            isWrapped = false;
+            endCol -= remaining;
+          }
+        } else {
+          endCol -= trimmedCount;
+        }
+      }
 
       const imageUrl = normalizeImageUrl(cleanUrl);
       const spans: ImageLinkSpan[] = [{ row: r, startCol, endCol }];
