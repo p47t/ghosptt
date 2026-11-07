@@ -603,7 +603,7 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
     this.glyphCtx.textBaseline = 'middle';
     this.glyphCtx.fillStyle = '#ffffff';
     // Snap vertical baseline to physical pixel grid for crisp horizontal CJK strokes
-    const snappedMidY = Math.round((CELL_H / 2 + 1) * this.dpr) / this.dpr;
+    const snappedMidY = Math.round((CELL_H / 2 - 1) * this.dpr) / this.dpr;
     this.glyphCtx.fillText(text, 0, snappedMidY);
     this.glyphCtx.restore();
 

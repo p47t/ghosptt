@@ -216,7 +216,7 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
         }
 
         ctx.fillStyle = fgCss;
-        ctx.fillText(item.text, item.x, item.y + CELL_H / 2 + 1);
+        ctx.fillText(item.text, item.x, item.y + CELL_H / 2 - 1);
         drawCalls++;
       } else {
         drawCalls++;

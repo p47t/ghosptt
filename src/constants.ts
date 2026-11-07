@@ -2,7 +2,7 @@ export const COLS = 80;
 export const ROWS = 24;
 export const CELL_W = 12;
 export const CELL_H = 24;
-export const FONT_SIZE = 20;
+export const FONT_SIZE = 19;
 export const FONT_FAMILY =
   '"Sarasa Mono TC", "Noto Sans Mono CJK TC", "Microsoft JhengHei", "PingFang TC", "Heiti TC", "Courier New", monospace';
 
