@@ -61,6 +61,7 @@ class GhosPttApp {
   private pttClient: PttConnectionClient | null = null;
 
   private detectedImageLinks: DetectedImageLink[] = [];
+  private postGalleryLinks: DetectedImageLink[] = [];
   private totalRxBytes = 0;
   private renderRequested = false;
   private isSelecting = false;
@@ -209,6 +210,27 @@ class GhosPttApp {
     const snapshot = this.terminal.captureFrameSnapshot();
     this.activeRenderer.render(snapshot);
     this.detectedImageLinks = extractImageLinksFromScreen(snapshot.screenLines);
+
+    // If returning to main menu or board index, reset the post image gallery
+    if (
+      snapshot.screenLines.some(
+        (line) =>
+          line.includes('【主功能表】') ||
+          line.includes('【看板列表】') ||
+          line.includes('看板《')
+      )
+    ) {
+      this.postGalleryLinks = [];
+    }
+
+    if (this.detectedImageLinks.length > 0) {
+      for (const link of this.detectedImageLinks) {
+        if (!this.postGalleryLinks.some((l) => l.imageUrl === link.imageUrl)) {
+          this.postGalleryLinks.push(link);
+        }
+      }
+    }
+
     this.updateMetricsUi();
   }
 
@@ -345,7 +367,11 @@ class GhosPttApp {
       const link = findLinkAtCell(this.detectedImageLinks, cell.col, cell.row);
       if (link) {
         this.termWrapper.style.cursor = 'pointer';
-        this.imagePreview.showHover(link, e.clientX, e.clientY);
+        const allLinks =
+          this.postGalleryLinks.length >= this.detectedImageLinks.length
+            ? this.postGalleryLinks
+            : this.detectedImageLinks;
+        this.imagePreview.showHover(link, e.clientX, e.clientY, allLinks);
       } else {
         this.termWrapper.style.cursor = 'text';
         this.imagePreview.hideHover();
@@ -392,7 +418,11 @@ class GhosPttApp {
         const cell = this.activeRenderer.clientPointToCell(e.clientX, e.clientY);
         const link = findLinkAtCell(this.detectedImageLinks, cell.col, cell.row);
         if (link) {
-          this.imagePreview.openLightbox(link);
+          const allLinks =
+            this.postGalleryLinks.length >= this.detectedImageLinks.length
+              ? this.postGalleryLinks
+              : this.detectedImageLinks;
+          this.imagePreview.openLightbox(link, allLinks);
         }
       }
       this.isSelecting = false;

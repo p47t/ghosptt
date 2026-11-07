@@ -167,11 +167,17 @@ export class ImagePreviewOverlay {
   private readonly lightboxModal: HTMLElement;
   private readonly lightboxImg: HTMLImageElement;
   private readonly lightboxUrlText: HTMLElement;
+  private readonly lightboxCounter: HTMLElement;
+  private readonly lightboxPrevBtn: HTMLButtonElement;
+  private readonly lightboxNextBtn: HTMLButtonElement;
   private readonly lightboxOpenBtn: HTMLAnchorElement;
   private readonly lightboxCopyBtn: HTMLButtonElement;
   private readonly lightboxSpinner: HTMLElement;
 
   private activeHoverLink: DetectedImageLink | null = null;
+  private lastAllLinks: DetectedImageLink[] = [];
+  private currentLinks: DetectedImageLink[] = [];
+  private currentIndex = 0;
   private hoverHideTimeout: number | null = null;
   private isModalOpen = false;
 
@@ -206,7 +212,10 @@ export class ImagePreviewOverlay {
       <div class="lightbox-backdrop"></div>
       <div class="lightbox-dialog">
         <div class="lightbox-header">
-          <div class="lightbox-title" id="lightboxUrlText">Image Preview</div>
+          <div class="lightbox-title-wrap">
+            <span class="lightbox-counter" id="lightboxCounter">1 / 1</span>
+            <div class="lightbox-title" id="lightboxUrlText">Image Preview</div>
+          </div>
           <div class="lightbox-actions">
             <button class="lightbox-btn" id="lightboxCopyBtn" title="Copy URL">Copy URL</button>
             <a class="lightbox-btn primary" id="lightboxOpenBtn" target="_blank" rel="noopener noreferrer">Open Original ↗</a>
@@ -214,8 +223,12 @@ export class ImagePreviewOverlay {
           </div>
         </div>
         <div class="lightbox-body">
-          <div class="lightbox-spinner" id="lightboxSpinner">Loading...</div>
-          <img class="lightbox-img" id="lightboxImg" referrerpolicy="no-referrer" alt="Full Image" />
+          <button class="lightbox-nav-btn prev" id="lightboxPrevBtn" title="Previous Image (← or A)">❮</button>
+          <div class="lightbox-content">
+            <div class="lightbox-spinner" id="lightboxSpinner">Loading...</div>
+            <img class="lightbox-img" id="lightboxImg" referrerpolicy="no-referrer" alt="Full Image" />
+          </div>
+          <button class="lightbox-nav-btn next" id="lightboxNextBtn" title="Next Image (→ or D)">❯</button>
         </div>
       </div>
     `;
@@ -227,6 +240,15 @@ export class ImagePreviewOverlay {
     this.lightboxUrlText = this.lightboxModal.querySelector(
       '#lightboxUrlText'
     ) as HTMLElement;
+    this.lightboxCounter = this.lightboxModal.querySelector(
+      '#lightboxCounter'
+    ) as HTMLElement;
+    this.lightboxPrevBtn = this.lightboxModal.querySelector(
+      '#lightboxPrevBtn'
+    ) as HTMLButtonElement;
+    this.lightboxNextBtn = this.lightboxModal.querySelector(
+      '#lightboxNextBtn'
+    ) as HTMLButtonElement;
     this.lightboxOpenBtn = this.lightboxModal.querySelector(
       '#lightboxOpenBtn'
     ) as HTMLAnchorElement;
@@ -248,10 +270,47 @@ export class ImagePreviewOverlay {
     const backdrop = this.lightboxModal.querySelector('.lightbox-backdrop');
     backdrop?.addEventListener('click', () => this.closeLightbox());
 
+    this.lightboxPrevBtn.addEventListener('click', (e: MouseEvent) => {
+      e.stopPropagation();
+      this.showPrevImage();
+    });
+
+    this.lightboxNextBtn.addEventListener('click', (e: MouseEvent) => {
+      e.stopPropagation();
+      this.showNextImage();
+    });
+
     window.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (this.isModalOpen && e.key === 'Escape') {
+      if (!this.isModalOpen) return;
+
+      if (e.key === 'Escape') {
         e.preventDefault();
         this.closeLightbox();
+        return;
+      }
+
+      if (
+        e.key === 'ArrowLeft' ||
+        e.key === 'a' ||
+        e.key === 'A' ||
+        e.key === 'p' ||
+        e.key === 'P'
+      ) {
+        e.preventDefault();
+        this.showPrevImage();
+        return;
+      }
+
+      if (
+        e.key === 'ArrowRight' ||
+        e.key === 'd' ||
+        e.key === 'D' ||
+        e.key === 'n' ||
+        e.key === 'N'
+      ) {
+        e.preventDefault();
+        this.showNextImage();
+        return;
       }
     });
 
@@ -280,11 +339,11 @@ export class ImagePreviewOverlay {
       this.lightboxImg.style.display = 'none';
     });
 
-    // Clicking the hover popover directly opens the lightbox
+    // Clicking the hover popover directly opens the lightbox with all known links
     this.hoverPopover.addEventListener('click', (e: MouseEvent) => {
       e.stopPropagation();
       if (this.activeHoverLink) {
-        this.openLightbox(this.activeHoverLink);
+        this.openLightbox(this.activeHoverLink, this.lastAllLinks);
       }
     });
   }
@@ -292,9 +351,11 @@ export class ImagePreviewOverlay {
   public showHover(
     link: DetectedImageLink,
     clientX: number,
-    clientY: number
+    clientY: number,
+    allLinks?: DetectedImageLink[]
   ): void {
     if (this.isModalOpen) return;
+    this.lastAllLinks = allLinks && allLinks.length > 0 ? allLinks : [link];
 
     if (this.hoverHideTimeout !== null) {
       window.clearTimeout(this.hoverHideTimeout);
@@ -351,19 +412,73 @@ export class ImagePreviewOverlay {
     }
   }
 
-  public openLightbox(link: DetectedImageLink): void {
+  public openLightbox(
+    link: DetectedImageLink,
+    allLinks?: DetectedImageLink[]
+  ): void {
     this.hideHover(true);
     this.isModalOpen = true;
 
+    // Deduplicate all links by normalized imageUrl
+    if (allLinks && allLinks.length > 0) {
+      const seen = new Set<string>();
+      const deduped: DetectedImageLink[] = [];
+      for (const item of allLinks) {
+        if (!seen.has(item.imageUrl)) {
+          seen.add(item.imageUrl);
+          deduped.push(item);
+        }
+      }
+      this.currentLinks = deduped;
+    } else {
+      this.currentLinks = [link];
+    }
+
+    const foundIdx = this.currentLinks.findIndex(
+      (l) => l.imageUrl === link.imageUrl
+    );
+    if (foundIdx >= 0) {
+      this.currentIndex = foundIdx;
+    } else {
+      this.currentLinks.unshift(link);
+      this.currentIndex = 0;
+    }
+
+    this.updateCurrentImage();
+    this.lightboxModal.style.display = 'flex';
+  }
+
+  public showNextImage(): void {
+    if (this.currentLinks.length <= 1) return;
+    this.currentIndex = (this.currentIndex + 1) % this.currentLinks.length;
+    this.updateCurrentImage();
+  }
+
+  public showPrevImage(): void {
+    if (this.currentLinks.length <= 1) return;
+    this.currentIndex =
+      (this.currentIndex - 1 + this.currentLinks.length) %
+      this.currentLinks.length;
+    this.updateCurrentImage();
+  }
+
+  private updateCurrentImage(): void {
+    if (this.currentLinks.length === 0) return;
+    const link = this.currentLinks[this.currentIndex];
+
     this.lightboxUrlText.textContent = link.rawUrl;
     this.lightboxOpenBtn.href = link.imageUrl;
+
+    const hasMultiple = this.currentLinks.length > 1;
+    this.lightboxCounter.textContent = `${this.currentIndex + 1} / ${this.currentLinks.length}`;
+    this.lightboxCounter.style.display = hasMultiple ? 'inline-block' : 'none';
+    this.lightboxPrevBtn.style.display = hasMultiple ? 'flex' : 'none';
+    this.lightboxNextBtn.style.display = hasMultiple ? 'flex' : 'none';
 
     this.lightboxSpinner.textContent = 'Loading image...';
     this.lightboxSpinner.style.display = 'block';
     this.lightboxImg.style.display = 'none';
     this.lightboxImg.src = link.imageUrl;
-
-    this.lightboxModal.style.display = 'flex';
   }
 
   public closeLightbox(): void {
