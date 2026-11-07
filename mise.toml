@@ -9,8 +9,12 @@ run = "npm install"
 description = "Start Vite dev server with PTT WebSocket proxy"
 run = "npm run dev"
 
+[tasks.typecheck]
+description = "Run TypeScript type checking"
+run = "npm run typecheck"
+
 [tasks.build]
-description = "Build production bundle"
+description = "Typecheck and build production bundle"
 run = "npm run build"
 
 [tasks.preview]

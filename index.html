@@ -183,7 +183,7 @@
       color: var(--text);
     }
   </style>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </head>
 <body>
   <header>
@@ -197,6 +197,8 @@
     <div class="controls">
       <button id="connectBtn" class="primary" disabled>Connect</button>
       <button id="disconnectBtn" disabled>Disconnect</button>
+      <button id="copyBtn" title="Copy selected text (or Ctrl+Shift+C / Ctrl+C)" disabled>Copy</button>
+      <button id="pasteBtn" title="Paste clipboard (or Ctrl+Shift+V / Ctrl+V)" disabled>Paste</button>
       <button data-send="guest\r" class="quick-btn" title="Send 'guest' + Enter" disabled>Login Guest</button>
       <button data-send="\r" class="quick-btn" title="Send Enter" disabled>Enter</button>
       <button data-send="\x1b[D" class="quick-btn" title="Left Arrow (Back)" disabled>←</button>
@@ -213,7 +215,7 @@
 
   <div class="footer">
     <div>
-      Click terminal to focus. Keys: <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> <kbd>Enter</kbd> <kbd>PgUp</kbd>/<kbd>PgDn</kbd> <kbd>Home</kbd>/<kbd>End</kbd> <kbd>Ctrl+A..Z</kbd>
+      Drag to select · <kbd>Ctrl+C</kbd> / <kbd>Ctrl+Shift+C</kbd> Copy · <kbd>Ctrl+V</kbd> / <kbd>Ctrl+Shift+V</kbd> Paste · Keys: <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> <kbd>Enter</kbd> <kbd>PgUp</kbd>/<kbd>PgDn</kbd>
     </div>
     <div id="statsText">80×24 · Big5 / Telnet · libghostty-vt.wasm</div>
   </div>
