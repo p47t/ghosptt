@@ -1,10 +1,56 @@
 import { BIG5_WIDE_PAD } from './constants';
 
+let uaoB2U: Uint16Array | null = null;
+let uaoU2B: Uint16Array | null = null;
 let unicodeToBig5Map: Map<string, number> | null = null;
 
 /**
+ * Check if the Big5-UAO 2.50 lookup tables are loaded.
+ */
+export function isBig5UaoInitialized(): boolean {
+  return uaoB2U !== null && uaoU2B !== null;
+}
+
+/**
+ * Load Big5-UAO tables synchronously from an ArrayBuffer or Uint8Array.
+ * Expected layout: 65,536 uint16 values for b2u, followed by 65,536 uint16 values for u2b (256 KB total).
+ */
+export function loadBig5UaoFromBuffer(buffer: ArrayBuffer | Uint8Array): void {
+  const byteOffset = buffer instanceof Uint8Array ? buffer.byteOffset : 0;
+  const rawBuf = buffer instanceof Uint8Array ? buffer.buffer : buffer;
+  uaoB2U = new Uint16Array(rawBuf, byteOffset, 65536);
+  uaoU2B = new Uint16Array(rawBuf, byteOffset + 65536 * 2, 65536);
+}
+
+/**
+ * Asynchronously initialize the Big5-UAO 2.50 tables from a URL, file path, or buffer.
+ * Falls back gracefully to standard WHATWG Big5 if loading fails.
+ */
+export async function initBig5Uao(
+  source: string | ArrayBuffer | Uint8Array = './uao250.bin'
+): Promise<void> {
+  if (isBig5UaoInitialized()) return;
+  if (typeof source !== 'string') {
+    loadBig5UaoFromBuffer(source);
+    return;
+  }
+  try {
+    const res = await fetch(source);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const arrayBuffer = await res.arrayBuffer();
+    loadBig5UaoFromBuffer(arrayBuffer);
+  } catch (err) {
+    console.warn(
+      'Big5-UAO table initialization failed, falling back to standard Big5:',
+      err
+    );
+  }
+}
+
+/**
  * Build a reverse Unicode -> Big5 lookup table from the browser's native `TextDecoder('big5')`
- * so pasted or IME-entered Traditional Chinese characters can be transmitted as Big5 bytes to PTT.
+ * so pasted or IME-entered Traditional Chinese characters can be transmitted as Big5 bytes to PTT
+ * when Big5-UAO tables are not loaded.
  */
 function getUnicodeToBig5Map(): Map<string, number> {
   if (unicodeToBig5Map) return unicodeToBig5Map;
@@ -27,12 +73,11 @@ function getUnicodeToBig5Map(): Map<string, number> {
 }
 
 /**
- * Encode a UTF-8 JavaScript string (ASCII + Traditional Chinese) into Big5 bytes for PTT.
- * Normalizes CRLF / LF line breaks into CR (`\r`) for Telnet BBS input.
+ * Encode a UTF-8 JavaScript string (ASCII, Traditional Chinese, and Big5-UAO extensions)
+ * into Big5 bytes for PTT. Normalizes CRLF / LF line breaks into CR (`\r`) for Telnet BBS input.
  */
 export function encodeStringToBig5(str: string): Uint8Array {
   const normalized = str.replace(/\r\n/g, '\r').replace(/\n/g, '\r');
-  const u2b = getUnicodeToBig5Map();
   const out: number[] = [];
 
   for (const ch of normalized) {
@@ -40,11 +85,22 @@ export function encodeStringToBig5(str: string): Uint8Array {
     if (cp === undefined) continue;
     if (cp < 0x80) {
       out.push(cp);
-    } else {
-      const big5 = u2b.get(ch);
-      if (big5 !== undefined) {
-        out.push((big5 >> 8) & 0xff, big5 & 0xff);
+      continue;
+    }
+    if (uaoU2B && cp <= 0xffff) {
+      const b5 = uaoU2B[cp];
+      if (b5 > 0xff) {
+        out.push((b5 >> 8) & 0xff, b5 & 0xff);
+        continue;
+      } else if (b5 > 0) {
+        out.push(b5);
+        continue;
       }
+    }
+    // Fallback if UAO not loaded or not in UAO table
+    const big5 = getUnicodeToBig5Map().get(ch);
+    if (big5 !== undefined) {
+      out.push((big5 >> 8) & 0xff, big5 & 0xff);
     }
   }
   return new Uint8Array(out);
@@ -153,9 +209,19 @@ export class PttBig5StreamDecoder {
           (trail >= 0x40 && trail <= 0x7e) || (trail >= 0xa1 && trail <= 0xfe);
 
         if (isValidTrail) {
-          pairBuf[0] = b;
-          pairBuf[1] = trail;
-          const ch = this.pairDecoder.decode(pairBuf);
+          let ch = '';
+          if (uaoB2U) {
+            const code = (b << 8) | trail;
+            const u = uaoB2U[code];
+            if (u !== 0) {
+              ch = String.fromCharCode(u);
+            }
+          }
+          if (!ch) {
+            pairBuf[0] = b;
+            pairBuf[1] = trail;
+            ch = this.pairDecoder.decode(pairBuf);
+          }
           const cp = ch.codePointAt(0) ?? 0;
           const w = this.codepointWidthFn(cp);
           out += interveningEscapes + ch + (w === 1 ? BIG5_WIDE_PAD : '');

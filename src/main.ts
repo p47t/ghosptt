@@ -1,3 +1,4 @@
+import { initBig5Uao } from './big5';
 import { LOGICAL_W, LOGICAL_H } from './terminal-layout';
 import { CELL_H, CELL_W } from './constants';
 import { GhosttyVtTerminal, type UrlUnderlineSpan } from './ghostty-wasm';
@@ -90,6 +91,7 @@ class GhosPttApp {
       const [terminal, gpuRenderer] = await Promise.all([
         GhosttyVtTerminal.create('./ghostty-vt.wasm'),
         WebGpuTerminalRenderer.create(this.canvasGpu),
+        initBig5Uao('./uao250.bin'),
       ]);
 
       this.terminal = terminal;
