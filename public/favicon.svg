@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background squircle gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1c1c28" />
+      <stop offset="50%" stop-color="#12121a" />
+      <stop offset="100%" stop-color="#09090d" />
+    </linearGradient>
+
+    <!-- Outer border glow -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4ea8de" stop-opacity="0.6" />
+      <stop offset="50%" stop-color="#2a2a3e" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#52b788" stop-opacity="0.5" />
+    </linearGradient>
+
+    <!-- Ghost body gradient -->
+    <linearGradient id="ghostGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="65%" stop-color="#e2f1fc" />
+      <stop offset="100%" stop-color="#b6dcfa" />
+    </linearGradient>
+
+    <!-- Ambient glow behind ghost -->
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="24" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <filter id="eyeGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <!-- Ghost bottom shadow -->
+    <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35" />
+      <stop offset="70%" stop-color="#52b788" stop-opacity="0.1" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- App icon container squircle -->
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bgGrad)" stroke="url(#borderGrad)" stroke-width="6" />
+
+  <!-- Subtle CRT / Terminal grid accent line at top -->
+  <path d="M96 72 H416" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2" stroke-linecap="round" />
+
+  <!-- Ghost aura / ambient glow -->
+  <ellipse cx="256" cy="410" rx="130" ry="26" fill="url(#shadowGrad)" />
+
+  <!-- Ghost silhouette with glow -->
+  <g filter="url(#neonGlow)">
+    <path d="
+      M 160 250
+      C 160 160, 202 110, 256 110
+      C 310 110, 352 160, 352 250
+      L 352 355
+      C 352 372, 332 382, 320 370
+      C 308 358, 292 358, 280 370
+      C 268 382, 244 382, 232 370
+      C 220 358, 204 358, 192 370
+      C 180 382, 160 372, 160 355
+      Z
+    " fill="url(#ghostGrad)" />
+  </g>
+
+  <!-- Terminal Eyes: Left eye is '>' (Prompt), Right eye is '_' (Cursor) -->
+  <g filter="url(#eyeGlow)">
+    <!-- Left Eye: Terminal prompt chevron '>' -->
+    <path d="M 204 220 L 230 238 L 204 256"
+          stroke="#0f172a"
+          stroke-width="12"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none" />
+
+    <!-- Right Eye: Terminal cursor block or underscore '_' -->
+    <path d="M 280 252 L 312 252"
+          stroke="#0f172a"
+          stroke-width="12"
+          stroke-linecap="round"
+          fill="none" />
+  </g>
+
+  <!-- Subtle blush / phosphor dot accents -->
+  <circle cx="188" cy="272" r="7" fill="#38bdf8" fill-opacity="0.45" />
+  <circle cx="324" cy="272" r="7" fill="#4ade80" fill-opacity="0.45" />
+</svg>
