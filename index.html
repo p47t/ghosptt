@@ -30,14 +30,16 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      min-height: 100vh;
+      height: 100vh;
+      height: 100dvh;
+      min-width: 0;
       padding: 16px;
       gap: 12px;
     }
 
     header {
       width: 100%;
-      max-width: 960px;
+      min-width: 0;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -125,6 +127,18 @@
       cursor: not-allowed;
     }
 
+    header, .metrics-panel, .footer { flex-shrink: 0; }
+    .brand, .badge, .controls { min-width: 0; }
+    .brand { flex-wrap: wrap; }
+    .badge, .footer { overflow-wrap: anywhere; }
+    .terminal-stage {
+      width: 100%;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
     .terminal-wrapper {
       position: relative;
       background: #000000;
@@ -147,6 +161,20 @@
       cursor: text;
     }
 
+    @media (max-width: 600px) {
+      body { padding: 8px; gap: 8px; }
+      header { padding: 8px; gap: 8px; }
+      .controls { gap: 4px; }
+      button { padding: 6px 8px; }
+      .terminal-wrapper { padding: 2px; border-radius: 4px; }
+      .metrics-panel, .footer { display: none; }
+    }
+    @media (max-height: 650px) {
+      .metrics-panel, .footer { display: none; }
+      body { padding: 4px; gap: 4px; }
+      header { max-height: 35dvh; overflow-y: auto; }
+    }
+
     /* Hidden textarea to support IME composition (Chinese input) & clipboard paste */
     #imeInput {
       position: absolute;
@@ -164,7 +192,7 @@
 
     .footer {
       width: 100%;
-      max-width: 960px;
+      min-width: 0;
       display: flex;
       justify-content: space-between;
       color: var(--muted);
@@ -186,7 +214,7 @@
 
     .metrics-panel {
       width: 100%;
-      max-width: 960px;
+      min-width: 0;
       display: flex;
       align-items: center;
       background: var(--panel);
@@ -536,11 +564,14 @@
     </div>
   </header>
 
+  <main class="terminal-stage" id="terminalStage">
   <div class="terminal-wrapper" id="termWrapper" tabindex="0">
     <canvas id="termCanvas" width="960" height="576"></canvas>
     <canvas id="gpuCanvas" width="960" height="576" style="display: none;"></canvas>
     <textarea id="imeInput" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
   </div>
+
+  </main>
 
   <div class="metrics-panel" id="metricsPanel">
     <div class="metric-badge">

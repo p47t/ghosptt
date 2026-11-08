@@ -1,3 +1,4 @@
+import { clientPointToCell, LOGICAL_W, LOGICAL_H } from './terminal-layout';
 import {
   CELL_H,
   CELL_W,
@@ -35,7 +36,7 @@ export interface RenderMetrics {
 
 export interface TerminalRenderer {
   readonly backendName: string;
-  resize(): void;
+  resize(scale?: number): void;
   clientPointToCell(
     clientX: number,
     clientY: number
@@ -70,30 +71,38 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
     }
     this.ctx = ctx;
     this.resize();
-  }
-
-  public resize(): void {
-    const dpr = window.devicePixelRatio || 1;
-    const logicalW = COLS * CELL_W;
-    const logicalH = ROWS * CELL_H;
-    this.canvas.style.width = `${logicalW}px`;
-    this.canvas.style.height = `${logicalH}px`;
-    this.canvas.width = Math.round(logicalW * dpr);
-    this.canvas.height = Math.round(logicalH * dpr);
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx.textBaseline = 'middle';
   }
 
-  public clientPointToCell(
-    clientX: number,
-    clientY: number
-  ): { col: number; row: number } {
-    const rect = this.canvas.getBoundingClientRect();
-    const relX = clientX - rect.left;
-    const relY = clientY - rect.top;
-    const col = Math.max(0, Math.min(COLS - 1, Math.floor(relX / CELL_W)));
-    const row = Math.max(0, Math.min(ROWS - 1, Math.floor(relY / CELL_H)));
-    return { col, row };
+  private scale = 1;
+
+  public resize(scale = this.scale): void {
+    this.scale = scale;
+    const density = (window.devicePixelRatio || 1) * scale;
+    const width = Math.max(1, Math.round(LOGICAL_W * density));
+    const height = Math.max(1, Math.round(LOGICAL_H * density));
+    this.canvas.style.width = `${LOGICAL_W * scale}px`;
+    this.canvas.style.height = `${LOGICAL_H * scale}px`;
+    if (this.canvas.width === width && this.canvas.height === height) return;
+    this.canvas.width = width;
+    this.canvas.height = height;
+    this.ctx.setTransform(width / LOGICAL_W, 0, 0, height / LOGICAL_H, 0, 0);
+    this.ctx.textBaseline = 'middle';
+  }
+
+  public clientPointToCell(clientX: number, clientY: number) {
+    return clientPointToCell(this.canvas, clientX, clientY);
+  }
+
+  /** Snap shared rectangle edges to physical pixels to avoid fractional-scale seams. */
+  private fillRect(x: number, y: number, w: number, h: number): void {
+    const sx = this.canvas.width / LOGICAL_W;
+    const sy = this.canvas.height / LOGICAL_H;
+    const left = Math.round(x * sx);
+    const top = Math.round(y * sy);
+    this.ctx.fillRect(left / sx, top / sy,
+      (Math.round((x + w) * sx) - left) / sx,
+      (Math.round((y + h) * sy) - top) / sy);
   }
 
   /**
@@ -116,7 +125,7 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
     if (cp >= 0x2581 && cp <= 0x2588) {
       const eighths = cp - 0x2580; // 1..8
       const bh = Math.round((h * eighths) / 8);
-      ctx.fillRect(x, y + h - bh, w, bh);
+      this.fillRect(x, y + h - bh, w, bh);
       return true;
     }
 
@@ -124,28 +133,28 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
     if (cp >= 0x2589 && cp <= 0x258f) {
       const eighths = 8 - (cp - 0x2588); // 7..1
       const bw = Math.round((w * eighths) / 8);
-      ctx.fillRect(x, y, bw, h);
+      this.fillRect(x, y, bw, h);
       return true;
     }
 
     // Right half block: U+2590 (▐)
     if (cp === 0x2590) {
       const bw = Math.round(w / 2);
-      ctx.fillRect(x + w - bw, y, bw, h);
+      this.fillRect(x + w - bw, y, bw, h);
       return true;
     }
 
     // Upper 1/8 block: U+2594 (▔)
     if (cp === 0x2594) {
       const bh = Math.max(2, Math.round(h / 8));
-      ctx.fillRect(x, y, w, bh);
+      this.fillRect(x, y, w, bh);
       return true;
     }
 
     // Right 1/8 block: U+2595 (▕)
     if (cp === 0x2595) {
       const bw = Math.max(2, Math.round(w / 8));
-      ctx.fillRect(x + w - bw, y, bw, h);
+      this.fillRect(x + w - bw, y, bw, h);
       return true;
     }
 
@@ -188,14 +197,14 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
 
     // 1. Fill terminal background
     ctx.fillStyle = rgbCss(frame.defaultBg);
-    ctx.fillRect(0, 0, COLS * CELL_W, ROWS * CELL_H);
+    this.fillRect(0, 0, COLS * CELL_W, ROWS * CELL_H);
     drawCalls++;
 
     // 2. Draw non-default cell backgrounds
     for (let i = 0; i < frame.backgroundRects.length; i++) {
       const rect = frame.backgroundRects[i];
       ctx.fillStyle = rgbCss(rect.color);
-      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      this.fillRect(rect.x, rect.y, rect.w, rect.h);
       drawCalls++;
     }
 
@@ -226,12 +235,12 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
         (item.flags & STYLE_UNDERLINE_MASK) >> STYLE_UNDERLINE_SHIFT;
       if (underline !== 0) {
         ctx.fillStyle = fgCss;
-        ctx.fillRect(item.x, item.y + CELL_H - 2, item.w, 1);
+        this.fillRect(item.x, item.y + CELL_H - 2, item.w, 1);
         drawCalls++;
       }
       if (item.flags & STYLE_FLAG_STRIKETHROUGH) {
         ctx.fillStyle = fgCss;
-        ctx.fillRect(item.x, item.y + Math.floor(CELL_H / 2), item.w, 1);
+        this.fillRect(item.x, item.y + Math.floor(CELL_H / 2), item.w, 1);
         drawCalls++;
       }
     }
@@ -242,12 +251,12 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
         const u = frame.urlUnderlines[i];
         if (u.isHovered) {
           ctx.fillStyle = 'rgba(78, 168, 222, 0.15)';
-          ctx.fillRect(u.x, u.y, u.w, CELL_H);
+          this.fillRect(u.x, u.y, u.w, CELL_H);
           ctx.fillStyle = '#4ea8de';
-          ctx.fillRect(u.x, u.y + CELL_H - 2, u.w, 2);
+          this.fillRect(u.x, u.y + CELL_H - 2, u.w, 2);
         } else {
           ctx.fillStyle = 'rgba(78, 168, 222, 0.55)';
-          ctx.fillRect(u.x, u.y + CELL_H - 2, u.w, 1);
+          this.fillRect(u.x, u.y + CELL_H - 2, u.w, 1);
         }
         drawCalls++;
       }
@@ -258,7 +267,7 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
       ctx.fillStyle = 'rgba(78, 168, 222, 0.35)';
       for (let i = 0; i < frame.selectionRects.length; i++) {
         const r = frame.selectionRects[i];
-        ctx.fillRect(r.x, r.y, r.w, r.h);
+        this.fillRect(r.x, r.y, r.w, r.h);
         drawCalls++;
       }
     }
@@ -266,7 +275,7 @@ export class CanvasTerminalRenderer implements TerminalRenderer {
     // 5. Draw cursor
     if (frame.cursor.visible) {
       ctx.fillStyle = 'rgba(0, 220, 130, 0.75)';
-      ctx.fillRect(
+      this.fillRect(
         frame.cursor.x * CELL_W,
         frame.cursor.y * CELL_H + CELL_H - 3,
         CELL_W,

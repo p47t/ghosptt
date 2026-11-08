@@ -1,3 +1,4 @@
+import { LOGICAL_W, LOGICAL_H } from './terminal-layout';
 import { CELL_H, CELL_W } from './constants';
 import { GhosttyVtTerminal, type UrlUnderlineSpan } from './ghostty-wasm';
 import {
@@ -78,6 +79,7 @@ class GhosPttApp {
       this.focusTerminal();
     });
     this.bindEvents();
+    this.observeLayout();
     this.updateRendererUi();
     this.updateMetricsUi();
     setInterval(() => this.updateMetricsUi(), 1000);
@@ -127,17 +129,47 @@ class GhosPttApp {
       this.activeRenderer = this.webgpuRenderer;
       this.canvas2d.style.display = 'none';
       this.canvasGpu.style.display = 'block';
-      this.webgpuRenderer.resize();
     } else {
       this.activeRenderer = this.canvasRenderer;
       this.canvasGpu.style.display = 'none';
       this.canvas2d.style.display = 'block';
-      this.canvasRenderer.resize();
     }
     this.updateRendererUi();
+    this.resizeTerminal();
     this.updateStatsText();
     this.updateMetricsUi();
     this.scheduleRender();
+  }
+
+  private resizeTerminal(): void {
+    const stage = getRequiredElement<HTMLElement>('terminalStage');
+    const style = getComputedStyle(this.termWrapper);
+    const horizontal = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+      + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+    const vertical = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+      + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    const scale = Math.max(0.001, Math.min(
+      Math.max(1, stage.clientWidth - horizontal) / LOGICAL_W,
+      Math.max(1, stage.clientHeight - vertical) / LOGICAL_H,
+    ));
+    this.activeRenderer.resize(scale);
+    this.scheduleRender();
+  }
+
+  private observeLayout(): void {
+    // The stage's flex allocation includes the measured height of wrapping UI.
+    const observer = new ResizeObserver(() => this.resizeTerminal());
+    observer.observe(getRequiredElement('terminalStage'));
+    window.addEventListener('resize', () => this.resizeTerminal());
+    // A monitor/DPR change need not change the container's CSS dimensions.
+    const watchDpr = () => {
+      const query = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      query.addEventListener('change', () => {
+        this.resizeTerminal();
+        watchDpr();
+      }, { once: true });
+    };
+    watchDpr();
   }
 
   private updateRendererUi(): void {
@@ -529,6 +561,12 @@ class GhosPttApp {
 
     // Keyboard navigation and shortcuts
     this.imeInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      // The lightbox listens on window after this event bubbles. Leave it in
+      // control without sending keys or editing the hidden terminal input.
+      if (this.imagePreview.isLightboxOpen()) {
+        e.preventDefault();
+        return;
+      }
       if (this.isComposing || e.isComposing || !this.terminal) return;
 
       const keyUpper = e.key.toUpperCase();
@@ -561,12 +599,8 @@ class GhosPttApp {
         return;
       }
 
-      // Close lightbox or clear selection on Escape
+      // Clear selection on Escape
       if (e.key === 'Escape') {
-        if (this.imagePreview.isLightboxOpen()) {
-          this.imagePreview.closeLightbox();
-          return;
-        }
         if (this.terminal.hasSelection()) {
           this.terminal.clearSelection();
           this.updateCopyButtonState();
@@ -623,11 +657,6 @@ class GhosPttApp {
         }
         this.focusTerminal();
       });
-    });
-
-    window.addEventListener('resize', () => {
-      this.activeRenderer.resize();
-      this.scheduleRender();
     });
   }
 }

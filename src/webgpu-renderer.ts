@@ -1,3 +1,4 @@
+import { clientPointToCell, LOGICAL_W, LOGICAL_H } from './terminal-layout';
 import {
   CELL_H,
   CELL_W,
@@ -15,8 +16,6 @@ import {
 import type { TerminalFrameSnapshot } from './ghostty-wasm';
 import type { RenderMetrics, TerminalRenderer } from './renderer';
 
-const LOGICAL_W = COLS * CELL_W; // 960
-const LOGICAL_H = ROWS * CELL_H; // 576
 const ATLAS_SIZE = 2048;
 const MAX_INSTANCES = 8192;
 const FLOATS_PER_INSTANCE = 16; // 64 bytes per instance (16-byte aligned)
@@ -281,10 +280,10 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
   );
   private instanceCount = 0;
 
-  private readonly atlasTexture: GPUTexture;
+  private atlasTexture: GPUTexture;
   private readonly nearestSampler: GPUSampler;
   private readonly linearSampler: GPUSampler;
-  private readonly cellBindGroup: GPUBindGroup;
+  private cellBindGroup: GPUBindGroup;
 
   private offscreenTexture: GPUTexture | null = null;
   private offscreenView: GPUTextureView | null = null;
@@ -297,7 +296,11 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
   private atlasCursorX = 0;
   private atlasCursorY = 0;
   private atlasRowHeight = 0;
+  // dpr is the effective number of physical pixels per logical pixel.
   private dpr = 1;
+  private deviceDpr = 1;
+  private scale = 1;
+  private atlasSize = ATLAS_SIZE;
   private physW = LOGICAL_W;
   private physH = LOGICAL_H;
   private crtEnabled = false;
@@ -501,18 +504,50 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
     this.crtEnabled = enabled;
   }
 
-  public resize(): void {
-    const nextDpr = window.devicePixelRatio || 1;
+  public resize(scale = this.scale): void {
+    this.scale = scale;
+    this.deviceDpr = window.devicePixelRatio || 1;
+    // A full screen has at most 1920 narrow or 960 wide glyphs. Reserve
+    // 32 rows of 64 narrow slots, including padding and shelf-packing waste.
+    const slots = Math.ceil(Math.sqrt(COLS * ROWS / 2)) + 1;
+    const limit = this.device.limits.maxTextureDimension2D;
+    const nextDpr = Math.min(this.deviceDpr * scale,
+      (Math.floor(limit / (slots * 2)) - 2) / CELL_W,
+      limit / LOGICAL_W, limit / LOGICAL_H);
+    const atlasSize = Math.max(ATLAS_SIZE,
+      Math.min(limit, Math.ceil(slots * 2 * (Math.ceil(CELL_W * nextDpr) + 2) / 256) * 256));
+    if (atlasSize !== this.atlasSize) {
+      this.atlasTexture.destroy();
+      this.atlasSize = atlasSize;
+      this.atlasTexture = this.device.createTexture({
+        label: 'Dynamic CJK Glyph Atlas',
+        size: [atlasSize, atlasSize, 1],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      this.cellBindGroup = this.device.createBindGroup({
+        layout: this.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.globalsBuffer } },
+          { binding: 1, resource: this.atlasTexture.createView() },
+          { binding: 2, resource: this.nearestSampler },
+        ],
+      });
+      this.clearAtlas();
+    }
     if (nextDpr !== this.dpr) {
       this.dpr = nextDpr;
       this.clearAtlas();
     }
 
-    this.physW = Math.max(1, Math.round(LOGICAL_W * this.dpr));
-    this.physH = Math.max(1, Math.round(LOGICAL_H * this.dpr));
+    this.canvas.style.width = `${LOGICAL_W * scale}px`;
+    this.canvas.style.height = `${LOGICAL_H * scale}px`;
+    const width = Math.max(1, Math.round(LOGICAL_W * this.dpr));
+    const height = Math.max(1, Math.round(LOGICAL_H * this.dpr));
+    if (width === this.physW && height === this.physH && this.offscreenView) return;
+    this.physW = width;
+    this.physH = height;
 
-    this.canvas.style.width = `${LOGICAL_W}px`;
-    this.canvas.style.height = `${LOGICAL_H}px`;
     this.canvas.width = this.physW;
     this.canvas.height = this.physH;
 
@@ -542,16 +577,35 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
     });
   }
 
-  public clientPointToCell(
-    clientX: number,
-    clientY: number
-  ): { col: number; row: number } {
-    const rect = this.canvas.getBoundingClientRect();
-    const relX = clientX - rect.left;
-    const relY = clientY - rect.top;
-    const col = Math.max(0, Math.min(COLS - 1, Math.floor(relX / CELL_W)));
-    const row = Math.max(0, Math.min(ROWS - 1, Math.floor(relY / CELL_H)));
-    return { col, row };
+  public clientPointToCell(clientX: number, clientY: number) {
+    return clientPointToCell(this.canvas, clientX, clientY);
+  }
+
+  /** Evict between frames so UVs already emitted in a frame remain valid. */
+  private prepareAtlas(frame: TerminalFrameSnapshot): void {
+    let x = this.atlasCursorX;
+    let y = this.atlasCursorY;
+    let rowHeight = this.atlasRowHeight;
+    const missing = new Set<string>();
+    for (const item of frame.glyphs) {
+      if (isCustomBlockCodepoint(item.text.codePointAt(0) ?? 0)) continue;
+      const pw = Math.max(1, Math.round(item.w * this.dpr));
+      const ph = Math.max(1, Math.round(CELL_H * this.dpr));
+      const key = `${item.text}:${item.flags & (STYLE_FLAG_BOLD | STYLE_FLAG_ITALIC)}:${pw}x${ph}`;
+      if (this.atlasCache.has(key) || missing.has(key)) continue;
+      missing.add(key);
+      if (x + pw + 2 > this.atlasSize) {
+        x = 0;
+        y += rowHeight + 2;
+        rowHeight = 0;
+      }
+      if (y + ph + 2 > this.atlasSize) {
+        this.clearAtlas();
+        return;
+      }
+      x += pw + 2;
+      rowHeight = Math.max(rowHeight, ph);
+    }
   }
 
   private clearAtlas(): void {
@@ -577,14 +631,14 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
 
     const pad = 2;
 
-    if (this.atlasCursorX + pw + pad > ATLAS_SIZE) {
+    if (this.atlasCursorX + pw + pad > this.atlasSize) {
       this.atlasCursorX = 0;
       this.atlasCursorY += this.atlasRowHeight + pad;
       this.atlasRowHeight = 0;
     }
 
-    if (this.atlasCursorY + ph + pad > ATLAS_SIZE) {
-      this.clearAtlas();
+    if (this.atlasCursorY + ph + pad > this.atlasSize) {
+      throw new Error('Glyph atlas capacity exceeded');
     }
 
     if (this.glyphCanvas.width !== pw || this.glyphCanvas.height !== ph) {
@@ -617,10 +671,10 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
     );
 
     const entry: AtlasEntry = {
-      u0: this.atlasCursorX / ATLAS_SIZE,
-      v0: this.atlasCursorY / ATLAS_SIZE,
-      u1: (this.atlasCursorX + pw) / ATLAS_SIZE,
-      v1: (this.atlasCursorY + ph) / ATLAS_SIZE,
+      u0: this.atlasCursorX / this.atlasSize,
+      v0: this.atlasCursorY / this.atlasSize,
+      u1: (this.atlasCursorX + pw) / this.atlasSize,
+      v1: (this.atlasCursorY + ph) / this.atlasSize,
       pw,
       ph,
     };
@@ -723,10 +777,11 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
 
     // Check if devicePixelRatio changed (e.g. browser zoom or moving across monitors)
     const currentDpr = window.devicePixelRatio || 1;
-    if (currentDpr !== this.dpr) {
+    if (currentDpr !== this.deviceDpr) {
       this.resize();
     }
 
+    this.prepareAtlas(frame);
     this.instanceCount = 0;
 
     // 1. Non-default cell background quads
@@ -965,16 +1020,16 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
   }
 
   public getMetrics(): RenderMetrics {
-    const atlasBytes = ATLAS_SIZE * ATLAS_SIZE * 4; // 16 MB
-    const offscreenBytes = this.crtEnabled ? this.physW * this.physH * 4 : 0;
+    const atlasBytes = this.atlasSize * this.atlasSize * 4;
+    const offscreenBytes = this.physW * this.physH * 4;
     const vertexBufferBytes = this.instanceData.byteLength;
     const totalGpuMemoryBytes = atlasBytes + offscreenBytes + vertexBufferBytes;
 
     const usedHeight = Math.min(
-      ATLAS_SIZE,
+      this.atlasSize,
       this.atlasCursorY + this.atlasRowHeight
     );
-    const usagePct = (usedHeight / ATLAS_SIZE) * 100;
+    const usagePct = (usedHeight / this.atlasSize) * 100;
     const isIdle = performance.now() - this.lastRenderTimestamp > 1200;
 
     return {
@@ -986,7 +1041,7 @@ export class WebGpuTerminalRenderer implements TerminalRenderer {
       renderPassCount: this.crtEnabled ? 2 : 1,
       instanceCount: this.instanceCount,
       glyphCacheEntries: this.atlasCache.size,
-      textureAtlasDim: `${ATLAS_SIZE}×${ATLAS_SIZE}`,
+      textureAtlasDim: `${this.atlasSize}×${this.atlasSize}`,
       textureAtlasMemoryBytes: atlasBytes,
       textureAtlasUsagePct: Math.round(usagePct * 10) / 10,
       totalGpuMemoryBytes,
