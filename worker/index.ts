@@ -52,20 +52,49 @@ export default {
       serverWs.accept();
       pttWs.accept();
 
+      // Keepalive heartbeat in Cloudflare Worker:
+      // Send Telnet IAC NOP (0xFF 0xF1) if connection is idle for 30 seconds.
+      // This guarantees the connection never triggers Cloudflare Edge's 100-second idle timeout.
+      const TELNET_IAC_NOP = new Uint8Array([0xff, 0xf1]);
+      let lastActivityTime = Date.now();
+
       // Bidirectional message pump
       serverWs.addEventListener('message', (event: MessageEvent) => {
+        lastActivityTime = Date.now();
         if (pttWs.readyState === WebSocket.OPEN) {
           pttWs.send(event.data);
         }
       });
 
       pttWs.addEventListener('message', (event: MessageEvent) => {
+        lastActivityTime = Date.now();
         if (serverWs.readyState === WebSocket.OPEN) {
           serverWs.send(event.data);
         }
       });
 
+      const heartbeatTimer = setInterval(() => {
+        if (
+          serverWs.readyState !== WebSocket.OPEN ||
+          pttWs.readyState !== WebSocket.OPEN
+        ) {
+          clearInterval(heartbeatTimer);
+          return;
+        }
+        const idleMs = Date.now() - lastActivityTime;
+        if (idleMs >= 30_000) {
+          lastActivityTime = Date.now();
+          try {
+            pttWs.send(TELNET_IAC_NOP);
+          } catch {}
+          try {
+            serverWs.send(TELNET_IAC_NOP);
+          } catch {}
+        }
+      }, 10_000);
+
       const closeBoth = (code?: number, reason?: string) => {
+        clearInterval(heartbeatTimer);
         try {
           if (serverWs.readyState === WebSocket.OPEN) {
             serverWs.close(code || 1000, reason);

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node tests/responsive.test.mjs",
+    "test": "node --test tests/*.test.mjs",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit && tsc -p worker/tsconfig.json",
     "preview": "vite preview",

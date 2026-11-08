@@ -13,6 +13,10 @@ run = "npm run dev"
 description = "Run TypeScript type checking"
 run = "npm run typecheck"
 
+[tasks.test]
+description = "Run test suite"
+run = "npm test"
+
 [tasks.build]
 description = "Typecheck and build production bundle"
 run = "npm run build"

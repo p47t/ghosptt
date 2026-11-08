@@ -2,6 +2,19 @@ import { PttBig5StreamDecoder, encodeStringToBig5 } from './big5';
 import { PTT_DIRECT_WS_URL } from './constants';
 import { TelnetParser } from './telnet';
 
+/**
+ * Telnet IAC NOP (0xFF 0xF1) keep-alive sequence.
+ * RFC 854 defines NOP as a safe no-operation command that Telnet servers (including PTT BBS)
+ * ignore without moving the cursor or altering terminal screen state.
+ */
+export const TELNET_IAC_NOP = new Uint8Array([0xff, 0xf1]);
+
+/**
+ * Periodic interval (in milliseconds) to send keep-alive frames when connection is idle.
+ * Kept well below Cloudflare's 100-second idle connection timeout.
+ */
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+
 export type ConnectionState =
   | 'ready'
   | 'connecting'
@@ -16,7 +29,8 @@ export interface PttClientCallbacks {
 
 /**
  * Manages the WebSocket connection to PTT (`wss://ws.ptt.cc/bbs` via local `/bbs` proxy),
- * Telnet IAC negotiation (NAWS 80x24), and Big5 <-> UTF-8 stream conversion.
+ * Telnet IAC negotiation (NAWS 80x24), Big5 <-> UTF-8 stream conversion, and
+ * periodic keep-alive heartbeats to prevent proxy/Cloudflare idle timeouts.
  */
 export class PttConnectionClient {
   private ws: WebSocket | null = null;
@@ -24,6 +38,8 @@ export class PttConnectionClient {
   private readonly big5Decoder: PttBig5StreamDecoder;
   private readonly callbacks: PttClientCallbacks;
   private totalBytesRx = 0;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private lastActivityTime = 0;
 
   constructor(
     codepointWidthFn: (cp: number) => number,
@@ -49,9 +65,11 @@ export class PttConnectionClient {
     const proxyUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/bbs`;
     const targetUrl = useDirect ? PTT_DIRECT_WS_URL : proxyUrl;
 
+    this.stopHeartbeat();
     this.telnet.reset();
     this.big5Decoder.reset();
     this.totalBytesRx = 0;
+    this.lastActivityTime = Date.now();
 
     this.callbacks.onStatusChange('connecting', `Connecting to ${targetUrl}...`);
 
@@ -68,6 +86,8 @@ export class PttConnectionClient {
 
     this.ws.addEventListener('open', () => {
       opened = true;
+      this.lastActivityTime = Date.now();
+      this.startHeartbeat();
       this.callbacks.onStatusChange('connected', 'Connected to ws.ptt.cc');
     });
 
@@ -78,6 +98,7 @@ export class PttConnectionClient {
     });
 
     this.ws.addEventListener('close', (event: CloseEvent) => {
+      this.stopHeartbeat();
       if (!opened && !useDirect) {
         this.connect(true);
         return;
@@ -92,6 +113,7 @@ export class PttConnectionClient {
     });
 
     this.ws.addEventListener('error', () => {
+      this.stopHeartbeat();
       if (opened) {
         this.callbacks.onStatusChange('error', 'Connection error');
       }
@@ -99,6 +121,7 @@ export class PttConnectionClient {
   }
 
   public disconnect(): void {
+    this.stopHeartbeat();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -107,6 +130,7 @@ export class PttConnectionClient {
 
   public sendRaw(data: string | Uint8Array): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.lastActivityTime = Date.now();
     if (typeof data === 'string') {
       const bytes = new Uint8Array(data.length);
       for (let i = 0; i < data.length; i++) {
@@ -127,6 +151,7 @@ export class PttConnectionClient {
   }
 
   private handleIncomingChunk(arrayBuffer: ArrayBuffer): void {
+    this.lastActivityTime = Date.now();
     const rawBytes = new Uint8Array(arrayBuffer);
     this.totalBytesRx += rawBytes.length;
 
@@ -140,6 +165,30 @@ export class PttConnectionClient {
       if (decodedText.length > 0) {
         this.callbacks.onTerminalText(decodedText, this.totalBytesRx);
       }
+    }
+  }
+
+  public checkHeartbeat(): void {
+    if (!this.isConnected()) {
+      this.stopHeartbeat();
+      return;
+    }
+    const idleMs = Date.now() - this.lastActivityTime;
+    if (idleMs >= HEARTBEAT_INTERVAL_MS) {
+      this.sendRaw(TELNET_IAC_NOP);
+      this.lastActivityTime = Date.now();
+    }
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => this.checkHeartbeat(), 10_000);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 }
